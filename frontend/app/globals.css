@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0a0c0f;
+  --color-surface: #13171c;
+  --color-raised: #1a1f26;
+  --color-line: #262d36;
+  --color-text: #e9ecf1;
+  --color-muted: #929db0;
+  --color-brand: #5eead4;
+  --color-brand-dim: #2dd4bf;
+  --color-orp: #ff5f56;
+  --color-warn: #fbbf24;
+
+  --font-reader: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The reader keeps the ORP letter in a fixed screen position, so the eye
+   never has to travel. A monospace face makes that alignment exact. */
+.reader-word {
+  font-family: var(--font-reader);
+  font-variant-ligatures: none;
+  white-space: pre;
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--color-brand);
+  color: var(--color-ink);
+}
+
+/* Thin scrollbars, so lists do not fight the reading surface for attention. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

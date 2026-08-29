@@ -1,0 +1,216 @@
+# Fovea
+
+Turn a PDF into a focused, one-word-at-a-time reading experience that **adapts to how much you actually retain**.
+
+Fovea is an RSVP (Rapid Serial Visual Presentation) reader. It shows one word at a time in a fixed screen position with the Optimal Recognition Point letter highlighted, so your eye never has to travel. After each stretch of reading it can quiz you, score your comprehension, and recommend a speed you can genuinely sustain — rather than one that merely looks impressive.
+
+```
+Upload PDF → extract text → clean & tokenize → compute ORP + pacing per word
+           → stream words to the reader → log speed & comprehension → recommend a pace
+```
+
+**Stack:** FastAPI + PyMuPDF + SQLite (backend) · Next.js 16 + React 19 + Tailwind v4 (frontend) · Sarvam AI for summaries and quiz generation, with local fallbacks.
+
+---
+
+## Quick start
+
+Two processes. Backend first.
+
+**Backend** (Python 3.11+, [uv](https://docs.astral.sh/uv/)):
+
+```bash
+cd backend && cp .env.example .env && uv sync && uv run uvicorn app.main:app --reload --port 8000
+```
+
+**Frontend** (Node 20+):
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Open http://localhost:3000, create an account, and drop in a PDF. Interactive API docs live at http://localhost:8000/docs.
+
+The AI features work without any API key — they fall back to local generation. To use Sarvam, set `SARVAM_API_KEY` in `backend/.env`.
+
+**Tests:**
+
+```bash
+cd backend && uv run pytest
+```
+
+---
+
+## Features
+
+### 1. Upload and text extraction
+
+PDFs are uploaded, validated (magic bytes, extension, size limit), and parsed with PyMuPDF. Extraction happens once at upload time; the resulting token stream is written to disk as JSON so reading never re-parses the PDF.
+
+Rejected with a clear message: non-PDFs, files over the size limit, password-protected PDFs, and scanned documents with no text layer (these need OCR first).
+
+### 2. Text cleaning
+
+Raw PDF text is messy, so it is normalised before tokenizing:
+
+- **Ligatures expanded** — `ﬁ` → `fi`, `ﬄ` → `ffl`
+- **Hyphenated line breaks rejoined** — `presen-\ntation` → `presentation`
+- **Typographic characters folded** — smart quotes, en/em dashes, non-breaking spaces
+- **Running heads and footers removed** — a short line repeated on ≥60% of pages is chrome, not content
+- **Decorative tokens dropped** — bullets and rule artifacts with no alphanumeric characters
+
+### 3. Optimal Recognition Point (ORP)
+
+The letter a reader fixates when identifying a word. Fovea pins it to the exact centre of the frame using a three-column grid (before / ORP / after) with equal flexible outer columns, so the anchor point does not move no matter how long the word is.
+
+| Word length | ORP index (0-based) |
+|---|---|
+| 1 | 0 |
+| 2–5 | 1 |
+| 6–9 | 2 |
+| 10–13 | 3 |
+| 14+ | 4 |
+
+### 4. Smart word timing
+
+Every word holds for `(60 / WPM) × multiplier` seconds. Uniform timing feels mechanical and measurably hurts retention, so the multiplier varies:
+
+| Condition | Multiplier |
+|---|---|
+| Sentence end (`.` `!` `?`) | ×2.0 |
+| Clause break (`,` `;` `:`) | ×1.3 |
+| Word of 12+ letters | ×1.5 |
+| Combined | product, capped at ×3.0 |
+
+Trailing quotes and brackets are stripped before checking punctuation, so `done."` still reads as a sentence end.
+
+### 5. Reader controls
+
+- Play / pause (space, or the button)
+- Step by word (`←` `→`) or by sentence (`shift` + `←` `→`)
+- Speed presets (200 / 300 / 400 / 500 / 700) plus a 100–900 slider, `↑` `↓` in 25-WPM steps
+- Jump to a page; scrub anywhere with the position slider
+- Live progress: word index, percent, current page, estimated minutes remaining
+- Surrounding context appears when paused, so you can re-orient before resuming
+- Auto-pauses when the tab is hidden — browsers throttle background timers, which would otherwise creep the position forward at ~1 word/sec and log a bogus reading session
+
+### 6. Progress persistence
+
+Position, page, and speed are saved per user per document — every 5 seconds while reading, on pause, and on leaving the reader. The library shows a progress bar and a "Continue reading" section for anything partly read.
+
+### 7. Adaptive reading speed
+
+Every stretch of reading is logged with its word range, speed, and duration. Taking a comprehension check attaches a score to that stretch, and the engine recommends a pace:
+
+- **≥90% comprehension** → push up, anchored on the fastest speed you have sustained
+- **80–90%** → nudge up slightly
+- **65–80%** → ease off
+- **<65%** → fall back to a speed you were actually retaining
+
+Recommendations snap to 25-WPM steps, are clamped to ±25% of your current pace so they never lurch, respect the configured floor and ceiling, and always carry a plain-English rationale plus a confidence level based on how many scored sessions exist. With no data it recommends nothing and says so.
+
+### 8. Comprehension quizzes and summaries
+
+Generated by Sarvam (`sarvam-105b`) using a strict JSON schema response format, with a `json_object` retry and then a **local fallback** if the provider is unavailable or no key is set:
+
+- **Quizzes** — cloze questions built from the passage's own information-dense sentences, with plausible length-matched distractors. Repeated sentences are used at most once, so one question cannot leak another's answer.
+- **Summaries** — frequency-weighted extractive ranking with a position bonus for opening sentences.
+
+Every response is labelled `ai` or `heuristic`, so the UI never implies a model wrote something it did not. **The answer key never leaves the server until the attempt is submitted.**
+
+### 9. Analytics
+
+Words read, minutes spent, documents completed, current streak, and best speed. Average WPM is weighted by words read, so a 30-second burst does not outweigh a twenty-minute session.
+
+Speed and comprehension are plotted as **two separate charts** — different scales, and a shared second axis would invite false comparisons. Colours (`#0d9488`, `#d97706`) are validated for lightness, chroma, colour-vision-deficiency separation, and contrast against the dark surface. Each chart has a hover crosshair, a directly labelled latest point, and a table view for screen readers.
+
+---
+
+## API
+
+All routes except `/health` and `/ai/status` require `Authorization: Bearer <token>`.
+
+| Method | Route | Purpose |
+|---|---|---|
+| `POST` | `/auth/register` | Create an account, returns a token |
+| `POST` | `/auth/login` | OAuth2 password form, returns a token |
+| `GET` | `/auth/me` | Current user |
+| `PATCH` | `/auth/me` | Update preferred speed |
+| `POST` | `/upload` | Upload a PDF (multipart) |
+| `GET` | `/documents` | List documents with progress |
+| `GET` | `/documents/{id}` | Document metadata |
+| `GET` | `/documents/{id}/content` | Token slice (`start`, `limit`) |
+| `DELETE` | `/documents/{id}` | Delete document, PDF, and tokens |
+| `POST` | `/progress` | Save position |
+| `GET` | `/progress/{document_id}` | Resume position |
+| `POST` | `/sessions` | Log a stretch of reading |
+| `GET` | `/adaptive/recommendation` | Recommended WPM + rationale |
+| `GET` | `/analytics/summary` | Aggregate stats and daily trend |
+| `POST` | `/documents/{id}/summary` | Generate or fetch a summary |
+| `POST` | `/quiz` | Generate a quiz for a word range |
+| `POST` | `/quiz/{id}/attempt` | Submit answers, get score + recommendation |
+| `GET` | `/ai/status` | Which provider is live, and the fallback |
+
+Content tokens are compact by design — `{"t": "presentation,", "o": 3, "m": 1.95, "p": 1}` — text, ORP index, delay multiplier, page.
+
+---
+
+## Layout
+
+```
+backend/
+  app/
+    main.py            FastAPI app, CORS, routers
+    config.py          Settings (env-overridable)
+    db.py  models.py   SQLAlchemy engine and schema
+    schemas.py         Pydantic request/response models
+    security.py        bcrypt hashing, JWT, current-user dependency
+    routers/           auth · documents · progress · analytics · ai
+    services/
+      pdf_service.py   PyMuPDF extraction
+      tokenizer.py     cleaning, ORP, pacing
+      adaptive.py      speed recommendation engine
+      llm.py           Sarvam client + local fallbacks
+  tests/               54 tests over the algorithms and the HTTP API
+frontend/
+  app/                 library · login · read/[id] · analytics
+  components/          RsvpDisplay · ReaderControls · QuizPanel · TrendChart · …
+  lib/                 api client · auth context · useRsvp engine · types
+```
+
+The RSVP loop lives in `lib/useRsvp.ts`. Each word schedules the next one, so the pacing multipliers apply naturally without a separate scheduler.
+
+---
+
+## Known limitations
+
+See the repository issues for tracked defects. The main ones today:
+
+- **Uploads are synchronous.** A large PDF blocks the request while it is parsed. Fine for typical documents, not for 500-page ones.
+- **No OCR.** Scanned PDFs are rejected rather than processed.
+- **Single-process assumptions.** SQLite and local file storage are right for one machine; multi-instance deployment needs Postgres and object storage.
+- **No frontend test suite.** The backend is covered; the reader's timing loop is not.
+- **Tokens load fully into memory** in the browser. A 200k-word document is a few MB of JSON.
+
+---
+
+## Roadmap
+
+**Reading quality**
+- Syllable- or vowel-aware ORP instead of the length table
+- Chunked RSVP (2–3 words at a time) for faster readers
+- Rewind-on-resume: step back a few words after a pause, the way a reader naturally re-enters a sentence
+- Respect paragraph and section boundaries with a longer beat
+
+**Adaptation**
+- Per-document-difficulty modelling, so a dense paper and a novel do not share one speed
+- Track comprehension by question type (recall vs. inference) rather than a single score
+- Confidence intervals on the recommendation instead of a three-level label
+
+**Platform**
+- Background processing for uploads (task queue + status polling)
+- OCR for scanned documents
+- Postgres + object storage for multi-instance deploys
+- EPUB and plain-text ingestion
+- Refresh tokens and password reset
+- Highlights and notes anchored to word indices
