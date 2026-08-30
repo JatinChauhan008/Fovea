@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from pathlib import Path
 
@@ -71,25 +72,37 @@ async def upload(
     tokens_path = user_dir / f"{handle}.tokens.json"
     pdf_path.write_bytes(payload)
 
+    # Create a placeholder row so the client gets a document ID immediately,
+    # and the event loop is freed while PyMuPDF does its CPU-bound work.
+    document = Document(
+        user_id=user.id,
+        title=filename,
+        original_filename=filename,
+        stored_path=str(pdf_path),
+        tokens_path=str(tokens_path),
+        page_count=0,
+        word_count=0,
+        status="processing",
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+
     try:
-        tokens, info = process_pdf(pdf_path)
+        tokens, info = await asyncio.to_thread(process_pdf, pdf_path)
     except PdfExtractionError as exc:
+        document.status = "failed"
+        document.error = str(exc)
+        db.commit()
         pdf_path.unlink(missing_ok=True)
         raise HTTPException(422, str(exc)) from exc
 
     write_tokens(tokens, tokens_path)
 
-    document = Document(
-        user_id=user.id,
-        title=guess_title(info["metadata"], filename),
-        original_filename=filename,
-        stored_path=str(pdf_path),
-        tokens_path=str(tokens_path),
-        page_count=info["page_count"],
-        word_count=len(tokens),
-        status="ready",
-    )
-    db.add(document)
+    document.title = guess_title(info["metadata"], filename)
+    document.page_count = info["page_count"]
+    document.word_count = len(tokens)
+    document.status = "ready"
     db.commit()
     db.refresh(document)
 
