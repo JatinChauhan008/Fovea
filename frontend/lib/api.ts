@@ -53,6 +53,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     );
   }
 
+  // An expired or revoked token on any route other than /auth/login means the
+  // session is over. Clear the token and send the browser to /login so the UI
+  // never gets stuck in a broken "looks authenticated but every call fails" state.
+  if (response.status === 401 && !path.startsWith("/auth/login") && getToken()) {
+    setToken(null);
+    window.location.href = "/login";
+    // Return a never-resolving promise — the page is navigating away.
+    return new Promise(() => {}) as Promise<T>;
+  }
+
   if (response.status === 204) return undefined as T;
 
   const raw = await response.text();

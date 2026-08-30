@@ -9,6 +9,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP / 'test.db'}"
 os.environ["STORAGE_DIR"] = str(_TMP / "storage")
 os.environ["SARVAM_API_KEY"] = ""
 os.environ["JWT_SECRET"] = "test-secret"
+os.environ["FOVEA_ENV"] = "development"
 
 import fitz  # noqa: E402
 import pytest  # noqa: E402
