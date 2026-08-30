@@ -43,22 +43,34 @@ export default function ReaderPage() {
         const first = await api.content(documentId, 0, CONTENT_CHUNK);
         if (cancelled) return;
 
+        // Accumulate chunks in a plain array so React state isn't updated (and
+        // array identity doesn't change) on every chunk. A new identity on every
+        // append would re-render useRsvp/RsvpDisplay on each network round-trip,
+        // causing O(n²) allocations across a long document.
+        const accumulated: WordToken[] = [...first.tokens];
+
         setLoaded({
           doc,
-          tokens: first.tokens,
+          tokens: accumulated,
           total: first.total,
           startIndex: doc.progress?.word_index ?? 0,
           startWpm: doc.progress?.wpm ?? user.preferred_wpm ?? DEFAULT_WPM,
         });
 
-        // Long documents stream in behind the reader, so reading starts immediately.
+        // Stream remaining chunks into the accumulator, then flush into state once
+        // all chunks have arrived so the array identity only changes once.
         let fetched = first.tokens.length;
         while (fetched < first.total && !cancelled) {
           const next = await api.content(documentId, fetched, CONTENT_CHUNK);
           if (cancelled || next.tokens.length === 0) break;
+          for (const tok of next.tokens) accumulated.push(tok);
           fetched += next.tokens.length;
+        }
+
+        if (!cancelled && fetched >= first.total) {
+          // Replace the tokens array once with the fully-loaded stable copy.
           setLoaded((current) =>
-            current ? { ...current, tokens: [...current.tokens, ...next.tokens] } : current,
+            current ? { ...current, tokens: [...accumulated] } : current,
           );
         }
       } catch (err) {
