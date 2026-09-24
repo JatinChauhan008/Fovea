@@ -5,8 +5,8 @@ import type { WordToken } from "./types";
 
 interface Options {
   tokens: WordToken[];
-  /** Words in the whole document. `tokens` may still be streaming in behind it. */
-  totalWords: number;
+  /** Words in the whole document, when `tokens` may still be streaming in. Defaults to `tokens.length`. */
+  totalWords?: number;
   initialIndex?: number;
   initialWpm?: number;
   /** Called whenever a continuous run of reading ends: pause, jump, speed change, finish, or unmount. */
@@ -37,7 +37,7 @@ const SENTENCE_END = /[.!?]["')\]]?$/;
  */
 export function useRsvp({
   tokens,
-  totalWords,
+  totalWords = tokens.length,
   initialIndex = 0,
   initialWpm = 300,
   onStretchEnd,

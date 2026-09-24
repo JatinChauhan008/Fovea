@@ -64,7 +64,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
   }
 
-  if (response.status === 401 && token) {
+  // A 401 from the login form just means a wrong password; anywhere else, a
+  // stored token was rejected and the session is over.
+  if (response.status === 401 && token && !path.startsWith("/auth/login")) {
     setToken(null);
     window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
   }
