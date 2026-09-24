@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Signing in updates `user`, which lands here and moves on to the library.
   useEffect(() => {
     if (user) router.replace("/");
   }, [user, router]);
@@ -25,7 +26,6 @@ export default function LoginPage() {
     try {
       if (mode === "login") await login(email, password);
       else await register(email, password);
-      router.replace("/");
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -33,76 +33,70 @@ export default function LoginPage() {
     }
   };
 
-  return (
-    <div className="mx-auto flex min-h-[70vh] max-w-md flex-col justify-center">
-      <div className="mb-8 text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          {mode === "login" ? "Welcome back" : "Create your account"}
-        </h1>
-        <p className="mt-2 text-sm text-muted">
-          Fovea learns how fast you can read without losing the thread.
-        </p>
-      </div>
+  const signingIn = mode === "login";
 
-      <form
-        onSubmit={submit}
-        className="space-y-4 rounded-2xl border border-line bg-surface p-6"
-      >
-        <label className="block">
-          <span className="mb-1.5 block text-sm text-muted">Email</span>
+  return (
+    <div className="mx-auto max-w-sm pt-16">
+      <h1 className="font-serif text-3xl font-semibold tracking-tight">
+        {signingIn ? "Sign in" : "Create an account"}
+      </h1>
+      <p className="mt-2 text-muted">
+        Fovea shows a PDF one word at a time, holding each word still so your eyes don&apos;t have to
+        move.
+      </p>
+
+      <form onSubmit={submit} className="mt-8 space-y-4">
+        <label className="block text-sm">
+          <span className="mb-1 block text-muted">Email</span>
           <input
             type="email"
             required
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             autoComplete="email"
-            className="focus-ring w-full rounded-lg border border-line bg-raised px-3 py-2.5 text-text placeholder:text-muted/60"
-            placeholder="you@example.com"
+            className="field"
           />
         </label>
 
-        <label className="block">
-          <span className="mb-1.5 block text-sm text-muted">Password</span>
+        <label className="block text-sm">
+          <span className="mb-1 block text-muted">
+            Password{!signingIn && <span className="text-faint"> (8 characters or more)</span>}
+          </span>
           <input
             type="password"
             required
             minLength={8}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-            className="focus-ring w-full rounded-lg border border-line bg-raised px-3 py-2.5 text-text placeholder:text-muted/60"
-            placeholder={mode === "register" ? "at least 8 characters" : ""}
+            autoComplete={signingIn ? "current-password" : "new-password"}
+            className="field"
           />
         </label>
 
         {error && (
-          <p className="rounded-lg border border-orp/40 bg-orp/10 p-3 text-sm text-orp">
+          <p role="alert" className="text-sm text-orp">
             {error}
           </p>
         )}
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="focus-ring w-full rounded-lg bg-brand py-2.5 font-semibold text-ink transition-opacity disabled:opacity-50"
-        >
-          {busy ? "Working…" : mode === "login" ? "Sign in" : "Create account"}
+        <button type="submit" disabled={busy} className="btn btn-solid w-full py-2">
+          {busy ? "One moment…" : signingIn ? "Sign in" : "Create account"}
         </button>
-
-        <p className="text-center text-sm text-muted">
-          {mode === "login" ? "No account yet?" : "Already have an account?"}{" "}
-          <button
-            type="button"
-            onClick={() => {
-              setMode(mode === "login" ? "register" : "login");
-              setError(null);
-            }}
-            className="focus-ring rounded text-brand hover:underline"
-          >
-            {mode === "login" ? "Create one" : "Sign in"}
-          </button>
-        </p>
       </form>
+
+      <p className="mt-6 text-sm text-muted">
+        {signingIn ? "New here? " : "Already have an account? "}
+        <button
+          type="button"
+          onClick={() => {
+            setMode(signingIn ? "register" : "login");
+            setError(null);
+          }}
+          className="rounded-sm text-ink underline decoration-1 underline-offset-4 hover:text-orp"
+        >
+          {signingIn ? "Create an account" : "Sign in"}
+        </button>
+      </p>
     </div>
   );
 }

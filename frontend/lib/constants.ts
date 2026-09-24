@@ -6,8 +6,8 @@ export const DEFAULT_WPM = 300;
 /** Save the reader's position at most this often while playing. */
 export const PROGRESS_SAVE_INTERVAL_MS = 5000;
 
-/** A comprehension check needs at least this much material to ask about. */
-export const MIN_QUIZ_WORDS = 60;
-
 /** Words fetched per request when streaming a long document in. */
 export const CONTENT_CHUNK = 20000;
+
+/** Mirrors the backend's max_upload_mb, so oversized files fail before uploading. */
+export const MAX_UPLOAD_MB = 40;

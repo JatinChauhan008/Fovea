@@ -9,7 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     """Runtime configuration, overridable via environment variables or backend/.env."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(BASE_DIR / ".env"), extra="ignore")
 
     app_name: str = "Fovea"
     database_url: str = f"sqlite:///{BASE_DIR / 'fovea.db'}"
@@ -30,17 +30,6 @@ class Settings(BaseSettings):
     default_wpm: int = 250
     min_wpm: int = 100
     max_wpm: int = 900
-
-    # Sarvam AI (summaries + comprehension quizzes)
-    sarvam_api_key: str | None = None
-    sarvam_base_url: str = "https://api.sarvam.ai/v1"
-    sarvam_model: str = "sarvam-105b"
-    sarvam_timeout_seconds: float = 90.0
-
-    @property
-    def ai_enabled(self) -> bool:
-        return bool(self.sarvam_api_key)
-
 
 @lru_cache
 def get_settings() -> Settings:

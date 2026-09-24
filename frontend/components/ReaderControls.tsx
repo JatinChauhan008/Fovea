@@ -1,15 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { WPM_PRESETS } from "@/lib/constants";
 
 interface Props {
   playing: boolean;
   wpm: number;
+  minWpm: number;
+  maxWpm: number;
   index: number;
   total: number;
+  loadedCount: number;
   page: number;
   pageCount: number;
-  percent: number;
   minutesLeft: number;
   onToggle: () => void;
   onStep: (direction: -1 | 1) => void;
@@ -19,36 +22,25 @@ interface Props {
   onJumpToPage: (page: number) => void;
 }
 
-function IconButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className="focus-ring flex h-10 w-10 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-brand/40 hover:text-text"
-    >
-      {children}
-    </button>
-  );
+function timeLeft(minutes: number) {
+  if (minutes < 1) return "under a minute left";
+  const rounded = Math.ceil(minutes);
+  if (rounded < 60) return `${rounded} min left`;
+  const h = Math.floor(rounded / 60);
+  const m = rounded % 60;
+  return m === 0 ? `${h} h left` : `${h} h ${m} min left`;
 }
 
 export function ReaderControls({
   playing,
   wpm,
+  minWpm,
+  maxWpm,
   index,
   total,
+  loadedCount,
   page,
   pageCount,
-  percent,
   minutesLeft,
   onToggle,
   onStep,
@@ -57,9 +49,22 @@ export function ReaderControls({
   onWpm,
   onJumpToPage,
 }: Props) {
+  const [pageDraft, setPageDraft] = useState("");
+
+  const seekFill = total > 1 ? (index / (total - 1)) * 100 : 0;
+  const wpmFill = ((wpm - minWpm) / (maxWpm - minWpm)) * 100;
+
+  const submitPage = (event: React.FormEvent) => {
+    event.preventDefault();
+    const target = Number(pageDraft);
+    if (Number.isInteger(target) && target >= 1 && target <= pageCount) {
+      onJumpToPage(target);
+      setPageDraft("");
+    }
+  };
+
   return (
-    <div className="space-y-5">
-      {/* Scrubber */}
+    <div className="space-y-8 text-sm">
       <div>
         <input
           type="range"
@@ -68,100 +73,103 @@ export function ReaderControls({
           value={index}
           onChange={(event) => onSeek(Number(event.target.value))}
           aria-label="Position in document"
-          className="focus-ring h-1.5 w-full cursor-pointer appearance-none rounded-full bg-line accent-brand"
+          className="slider w-full"
+          style={{ ["--fill" as string]: `${seekFill}%` }}
         />
-        <div className="mt-2 flex items-center justify-between text-xs text-muted">
+        <div className="mt-1 flex flex-wrap justify-between gap-x-4 text-faint tabular-nums">
           <span>
-            word {index.toLocaleString()} / {total.toLocaleString()} &middot;{" "}
-            {percent.toFixed(1)}%
+            Word {(index + 1).toLocaleString()} of {total.toLocaleString()}, page {page} of {pageCount}
           </span>
-          <span>
-            page {page} / {pageCount} &middot; ~{Math.ceil(minutesLeft)} min left
-          </span>
+          <span>{timeLeft(minutesLeft)} at this speed</span>
         </div>
+        {loadedCount < total && (
+          <p className="mt-1 text-faint tabular-nums">
+            Still loading the rest of the text ({loadedCount.toLocaleString()} of {total.toLocaleString()} words).
+          </p>
+        )}
       </div>
 
-      {/* Transport */}
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <IconButton label="Previous sentence" onClick={() => onSentence(-1)}>
-          <span aria-hidden>&#171;</span>
-        </IconButton>
-        <IconButton label="Previous word" onClick={() => onStep(-1)}>
-          <span aria-hidden>&#8249;</span>
-        </IconButton>
-
-        <button
-          type="button"
-          onClick={onToggle}
-          className="focus-ring flex h-12 min-w-32 items-center justify-center gap-2 rounded-xl bg-brand px-6 font-semibold text-ink transition-transform hover:scale-[1.02]"
-        >
-          {playing ? "Pause" : "Play"}
-          <span className="text-xs font-normal opacity-70">space</span>
+      <div className="flex items-center justify-center gap-2">
+        <button type="button" onClick={() => onSentence(-1)} className="btn" title="Previous sentence (Shift ←)">
+          <span aria-hidden>«</span>
+          <span className="sr-only">Previous sentence</span>
         </button>
-
-        <IconButton label="Next word" onClick={() => onStep(1)}>
-          <span aria-hidden>&#8250;</span>
-        </IconButton>
-        <IconButton label="Next sentence" onClick={() => onSentence(1)}>
-          <span aria-hidden>&#187;</span>
-        </IconButton>
+        <button type="button" onClick={() => onStep(-1)} className="btn" title="Previous word (←)">
+          <span aria-hidden>‹</span>
+          <span className="sr-only">Previous word</span>
+        </button>
+        <button type="button" onClick={onToggle} className="btn btn-solid w-28 py-2">
+          {playing ? "Pause" : "Play"}
+        </button>
+        <button type="button" onClick={() => onStep(1)} className="btn" title="Next word (→)">
+          <span aria-hidden>›</span>
+          <span className="sr-only">Next word</span>
+        </button>
+        <button type="button" onClick={() => onSentence(1)} className="btn" title="Next sentence (Shift →)">
+          <span aria-hidden>»</span>
+          <span className="sr-only">Next sentence</span>
+        </button>
       </div>
 
-      {/* Speed */}
-      <div className="flex flex-wrap items-center justify-center gap-3">
-        <div className="flex items-center gap-1 rounded-lg border border-line p-1">
-          {WPM_PRESETS.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => onWpm(preset)}
-              className={`focus-ring rounded-md px-3 py-1.5 text-sm transition-colors ${
-                wpm === preset
-                  ? "bg-brand text-ink font-medium"
-                  : "text-muted hover:bg-raised hover:text-text"
-              }`}
-            >
-              {preset}
-            </button>
-          ))}
+      <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 border-t border-rule pt-5">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="text-muted">Speed</span>
+          <div className="flex gap-3 tabular-nums">
+            {WPM_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => onWpm(preset)}
+                aria-pressed={wpm === preset}
+                className={`rounded-sm ${
+                  wpm === preset
+                    ? "text-ink underline decoration-1 underline-offset-4"
+                    : "text-faint hover:text-ink"
+                }`}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center gap-3">
+            <input
+              type="range"
+              min={minWpm}
+              max={maxWpm}
+              step={25}
+              value={wpm}
+              onChange={(event) => onWpm(Number(event.target.value))}
+              aria-label="Words per minute"
+              className="slider w-32"
+              style={{ ["--fill" as string]: `${wpmFill}%` }}
+            />
+            <span className="w-16 tabular-nums">{wpm} wpm</span>
+          </label>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-muted">
+        <form onSubmit={submitPage} className="flex items-center gap-2">
+          <label htmlFor="jump-page" className="whitespace-nowrap text-muted">
+            Go to page
+          </label>
           <input
-            type="range"
-            min={100}
-            max={900}
-            step={25}
-            value={wpm}
-            onChange={(event) => onWpm(Number(event.target.value))}
-            aria-label="Words per minute"
-            className="focus-ring h-1.5 w-40 cursor-pointer appearance-none rounded-full bg-line accent-brand"
-          />
-          <span className="w-20 tabular-nums">{wpm} wpm</span>
-        </label>
-
-        <label className="flex items-center gap-2 text-sm text-muted">
-          Page
-          <input
+            id="jump-page"
             type="number"
+            inputMode="numeric"
             min={1}
             max={pageCount}
-            defaultValue={page}
-            key={page}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                onJumpToPage(Number((event.target as HTMLInputElement).value));
-              }
-            }}
-            aria-label="Jump to page"
-            className="focus-ring w-16 rounded-md border border-line bg-surface px-2 py-1 text-text"
+            value={pageDraft}
+            placeholder={String(page)}
+            onChange={(event) => setPageDraft(event.target.value)}
+            className="field w-16 px-2 py-1 text-center tabular-nums"
           />
-        </label>
+        </form>
       </div>
 
-      <p className="text-center text-xs text-muted/70">
-        space play/pause &middot; &larr; &rarr; word &middot; shift + &larr; &rarr; sentence
-        &middot; &uarr; &darr; speed
+      <p className="hidden flex-wrap justify-center gap-x-5 gap-y-1 text-xs text-faint sm:flex">
+        <span><span className="kbd">Space</span> play or pause</span>
+        <span><span className="kbd">←</span> <span className="kbd">→</span> word</span>
+        <span><span className="kbd">Shift</span> + arrows sentence</span>
+        <span><span className="kbd">↑</span> <span className="kbd">↓</span> speed</span>
       </p>
     </div>
   );

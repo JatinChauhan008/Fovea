@@ -45,8 +45,6 @@ class Document(Base):
     word_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="ready")  # ready | failed
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    summary_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     owner: Mapped[User] = relationship(back_populates="documents")
@@ -55,9 +53,6 @@ class Document(Base):
         back_populates="document", cascade="all, delete-orphan"
     )
     sessions: Mapped[list["ReadingSession"]] = relationship(
-        back_populates="document", cascade="all, delete-orphan"
-    )
-    quizzes: Mapped[list["Quiz"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )
 
@@ -82,7 +77,7 @@ class Progress(Base):
 
 
 class ReadingSession(Base):
-    """One stretch of actual reading - the raw material for analytics and adaptation."""
+    """One stretch of actual reading - the raw material for analytics."""
 
     __tablename__ = "reading_sessions"
 
@@ -96,41 +91,6 @@ class ReadingSession(Base):
     words_read: Mapped[int] = mapped_column(Integer, default=0)
     wpm: Mapped[int] = mapped_column(Integer, default=250)
     duration_seconds: Mapped[float] = mapped_column(Float, default=0.0)
-    comprehension: Mapped[float | None] = mapped_column(Float, nullable=True)  # 0..1
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
     document: Mapped[Document] = relationship(back_populates="sessions")
-
-
-class Quiz(Base):
-    __tablename__ = "quizzes"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    document_id: Mapped[int] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), index=True
-    )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    start_index: Mapped[int] = mapped_column(Integer, default=0)
-    end_index: Mapped[int] = mapped_column(Integer, default=0)
-    wpm: Mapped[int] = mapped_column(Integer, default=250)
-    questions_json: Mapped[str] = mapped_column(Text)
-    source: Mapped[str] = mapped_column(String(32), default="ai")  # ai | heuristic
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-    document: Mapped[Document] = relationship(back_populates="quizzes")
-    attempts: Mapped[list["QuizAttempt"]] = relationship(
-        back_populates="quiz", cascade="all, delete-orphan"
-    )
-
-
-class QuizAttempt(Base):
-    __tablename__ = "quiz_attempts"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    quiz_id: Mapped[int] = mapped_column(ForeignKey("quizzes.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    answers_json: Mapped[str] = mapped_column(Text)
-    score: Mapped[float] = mapped_column(Float, default=0.0)  # 0..1
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-    quiz: Mapped[Quiz] = relationship(back_populates="attempts")

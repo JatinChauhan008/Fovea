@@ -1,14 +1,9 @@
 import type {
-  AiStatus,
   Analytics,
   AuthResponse,
   Content,
   Doc,
   Progress,
-  Quiz,
-  QuizResult,
-  Recommendation,
-  Summary,
 } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -35,6 +30,9 @@ export function setToken(token: string | null) {
   else window.localStorage.removeItem(TOKEN_KEY);
 }
 
+/** Fired when the API rejects a stored token, so the app can sign out. */
+export const SESSION_EXPIRED_EVENT = "fovea:session-expired";
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers = new Headers(init.headers);
@@ -56,7 +54,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (response.status === 204) return undefined as T;
 
   const raw = await response.text();
-  const data = raw ? JSON.parse(raw) : null;
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    // Proxies and crashed workers answer with plain text or HTML.
+    if (response.ok) {
+      throw new ApiError("The server sent a response Fovea could not read.", response.status);
+    }
+  }
+
+  if (response.status === 401 && token) {
+    setToken(null);
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  }
 
   if (!response.ok) {
     const detail = data?.detail;
@@ -129,32 +140,6 @@ export const api = {
     duration_seconds: number;
   }) => request<unknown>("/sessions", { method: "POST", body: JSON.stringify(payload) }),
 
-  // --- adaptive, analytics, AI ---
-  recommendation: (documentId?: number) =>
-    request<Recommendation>(
-      `/adaptive/recommendation${documentId ? `?document_id=${documentId}` : ""}`,
-    ),
-
+  // --- analytics ---
   analytics: () => request<Analytics>("/analytics/summary"),
-
-  aiStatus: () => request<AiStatus>("/ai/status"),
-
-  summarize: (documentId: number, refresh = false) =>
-    request<Summary>(`/documents/${documentId}/summary?refresh=${refresh}`, {
-      method: "POST",
-    }),
-
-  createQuiz: (payload: {
-    document_id: number;
-    start_index: number;
-    end_index: number;
-    wpm: number;
-    num_questions?: number;
-  }) => request<Quiz>("/quiz", { method: "POST", body: JSON.stringify(payload) }),
-
-  submitQuiz: (quizId: number, answers: number[]) =>
-    request<QuizResult>(`/quiz/${quizId}/attempt`, {
-      method: "POST",
-      body: JSON.stringify({ answers }),
-    }),
 };

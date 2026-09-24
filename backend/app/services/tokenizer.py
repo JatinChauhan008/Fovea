@@ -138,8 +138,3 @@ def tokenize_pages(pages: list[str]) -> list[Token]:
 
     return tokens
 
-
-def tokens_to_text(tokens: list[dict], start: int = 0, end: int | None = None) -> str:
-    """Reassemble a slice of the stream into prose (for summaries and quizzes)."""
-    window = tokens[start:end] if end is not None else tokens[start:]
-    return " ".join(tok["t"] for tok in window)

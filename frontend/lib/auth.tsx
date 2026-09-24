@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, getToken, setToken } from "./api";
+import { api, getToken, SESSION_EXPIRED_EVENT, setToken } from "./api";
 import type { User } from "./types";
 
 interface AuthValue {
@@ -41,6 +41,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(setUser)
       .catch(() => setToken(null))
       .finally(() => setLoading(false));
+  }, []);
+
+  // A token that expires mid-session drops the user back at the login screen
+  // (via useRequireAuth) instead of leaving every request failing with a 401.
+  useEffect(() => {
+    const onExpired = () => setUser(null);
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
