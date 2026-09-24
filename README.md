@@ -1,27 +1,42 @@
 # Fovea
 
-Turn a PDF into a focused, one-word-at-a-time RSVP reading experience.
+Fovea is a speed reader for PDFs. Upload a document and it shows you the text one word at a time, in the same spot on the screen, with one letter of each word marked in red. Your eyes stay still and the words come to them.
 
-Fovea extracts text from PDFs, cleans it, tokenizes it, highlights each word's Optimal Recognition Point, and presents the stream with pacing that respects punctuation and long words. It has no AI features, no model provider configuration, and no generated summaries or quizzes.
+This style of reading is called RSVP (rapid serial visual presentation). Most of the time spent reading a page goes into moving your eyes: jumping from word to word and line to line. Holding each word in place removes that movement, which makes 300–500 words per minute comfortable for most people.
 
-```
-Upload PDF -> extract text -> clean & tokenize -> compute ORP + pacing per word
-           -> stream words to the reader -> save progress -> show analytics
-```
+Fovea remembers where you stopped in every document and keeps a log of how much and how fast you read.
 
-**Stack:** FastAPI + PyMuPDF + SQLite (backend) · Next.js 16 + React 19 + Tailwind v4 (frontend).
+## Contents
 
-## Quick Start
+- [Getting started](#getting-started)
+- [Using the reader](#using-the-reader)
+- [How it works](#how-it-works)
+- [Configuration](#configuration)
+- [Running the tests](#running-the-tests)
+- [API](#api)
+- [Project layout](#project-layout)
+- [Limitations](#limitations)
 
-Backend first:
+## Getting started
+
+You need **Python 3.11+** with [uv](https://docs.astral.sh/uv/), and **Node.js 20.9+**.
+
+### 1. Start the backend
 
 ```bash
 cd backend
+cp .env.example .env
 uv sync
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-Frontend:
+Don't skip the `.env` step. The example file sets `FOVEA_ENV=development`, which lets the API run with the placeholder JWT secret on your own machine. Without it, the API refuses to start (see [Configuration](#configuration)).
+
+The API is now running at http://localhost:8000, with interactive docs at http://localhost:8000/docs.
+
+### 2. Start the frontend
+
+In a second terminal:
 
 ```bash
 cd frontend
@@ -29,121 +44,153 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000, create an account, and drop in a PDF. API docs live at http://localhost:8000/docs.
+### 3. Read something
 
-Run backend tests with:
+Open http://localhost:3000, create an account and add a PDF. Text-based PDFs up to 40 MB work. Scanned documents need to go through OCR first, because Fovea only reads the text layer.
 
-```bash
-cd backend
-uv run pytest
+## Using the reader
+
+Press **Space** to start. When you pause, the words around your position appear in grey underneath, so you can find your place again.
+
+| Key | Action |
+|---|---|
+| `Space` | Play or pause |
+| `←` `→` | Back or forward one word |
+| `Shift` + `←` `→` | Back or forward one sentence |
+| `↑` `↓` | Speed up or slow down by 25 wpm |
+| `Esc` | Pause |
+
+You can also drag the position bar, type a page number into **Go to page**, or pick a preset speed from 200 to 700 wpm (the slider goes from 100 to 900).
+
+Your place and speed are saved every few seconds while you read, and again when you leave. The next time you open the document, it picks up at the same word. Switching to another tab pauses the reader, because browsers slow down timers in background tabs and your position would otherwise creep forward.
+
+**Stats** shows the total words you've read, your time spent reading, your average and fastest speeds, the documents you've finished, and a chart of your speed by day. A reading session is logged whenever you pause, jump somewhere else, change speed, finish or leave. Words you skip past are never counted as read.
+
+## How it works
+
+```
+PDF ──▶ extract text ──▶ clean ──▶ split into words ──▶ ORP + timing per word ──▶ saved as JSON
+                                                                                       │
+                           reader ◀── streamed in 20,000-word chunks ◀────────────────┘
 ```
 
-## Features
+The backend extracts and processes the text once, at upload time. The reader then only fetches words, so it never parses the PDF again.
 
-### Upload And Extraction
+### Cleaning the text
 
-PDF uploads are validated by extension, size, and magic bytes, then parsed with PyMuPDF. Extracted tokens are written to disk as JSON so the reader does not re-parse the PDF while reading.
+PDF text is messy. Before splitting it into words, Fovea:
 
-Fovea rejects non-PDFs, oversized files, password-protected PDFs, and scanned PDFs with no text layer.
+- expands ligatures (`ﬁ` → `fi`, `ﬄ` → `ffl`)
+- rejoins words hyphenated across a line break (`recog-` / `nition` → `recognition`)
+- straightens curly quotes, and turns en and em dashes into plain hyphens
+- removes running headers, footers and page numbers: short lines that repeat on most pages
+- drops tokens with no letters or digits in them, such as decorative rules and bullets
 
-### Text Cleaning
+### Where your eye lands
 
-Raw PDF text is normalized before tokenizing:
+Readers recognise a word fastest when their eye lands a little left of its centre. This point is called the **optimal recognition point (ORP)**. Fovea marks that letter in red and always draws it in the exact centre of the screen, however long the word is.
 
-- Ligatures are expanded, such as `fi` and `ffl`.
-- Hyphenated line breaks are rejoined.
-- Typographic quotes, dashes, and non-breaking spaces are folded.
-- Repeated running heads and footers are removed.
-- Decorative tokens with no alphanumeric characters are dropped.
+| Word length | Highlighted letter |
+|---|---|
+| 1 | 1st |
+| 2–5 | 2nd |
+| 6–9 | 3rd |
+| 10–13 | 4th |
+| 14+ | 5th |
 
-### Optimal Recognition Point
+### Timing
 
-The reader pins each word's recognition point to the center of the display so the eye does not travel horizontally.
+At a given speed, each word is shown for `60 / wpm` seconds, multiplied by an extra pause where the text needs one:
 
-| Word length | ORP index |
-|---|---:|
-| 1 | 0 |
-| 2-5 | 1 |
-| 6-9 | 2 |
-| 10-13 | 3 |
-| 14+ | 4 |
+| When the word… | Hold multiplier |
+|---|---|
+| ends a sentence (`.` `!` `?`) | × 2.0 |
+| ends a clause (`,` `;` `:`) | × 1.3 |
+| has 12 or more letters | × 1.5 |
 
-### Word Timing
+The multipliers combine, up to a limit of × 3.0. Closing quotes and brackets are ignored when looking for punctuation, so `done."` still gets the full sentence pause. Because of these pauses, your average speed in Stats comes out a little below the speed you set.
 
-Every word holds for `(60 / WPM) x multiplier` seconds.
+## Configuration
 
-| Condition | Multiplier |
-|---|---:|
-| Sentence end (`.` `!` `?`) | 2.0 |
-| Clause break (`,` `;` `:`) | 1.3 |
-| Word of 12+ letters | 1.5 |
-| Combined | product, capped at 3.0 |
+The backend reads its settings from environment variables or `backend/.env`. Every setting has a default.
 
-Trailing quotes and brackets are ignored when detecting punctuation, so `done."` still gets a sentence-end pause.
+| Variable | Default | Notes |
+|---|---|---|
+| `FOVEA_ENV` | `production` | Set to `development` to allow the placeholder JWT secret. Never use it in production. |
+| `JWT_SECRET` | placeholder | **Required in production:** a random string of 32+ characters. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. |
+| `JWT_EXPIRE_MINUTES` | `20160` (14 days) | How long a sign-in lasts. |
+| `DATABASE_URL` | `sqlite:///backend/fovea.db` | Any SQLAlchemy URL. |
+| `STORAGE_DIR` | `backend/storage` | Where uploaded PDFs and their extracted words are kept. |
+| `MAX_UPLOAD_MB` | `40` | The frontend checks the same limit in `frontend/lib/constants.ts` (`MAX_UPLOAD_MB`). Change both together. |
+| `DEFAULT_WPM` / `MIN_WPM` / `MAX_WPM` | `250` / `100` / `900` | Reading speed defaults and limits. |
+| `CORS_ORIGINS` | `["http://localhost:3000","http://127.0.0.1:3000"]` | Add your frontend's address here if it runs somewhere else. |
 
-### Reader Controls
+The frontend has a single setting: `NEXT_PUBLIC_API_URL`, the address of the backend. It defaults to `http://127.0.0.1:8000`.
 
-- Play and pause with the button or spacebar.
-- Step by word with left/right arrows.
-- Step by sentence with shift + left/right arrows.
-- Use presets, the WPM slider, or up/down arrows for speed.
-- Jump to a page or scrub through the document.
-- See word index, percent complete, current page, and estimated time remaining.
-- Auto-pause when the tab is hidden to avoid logging bogus reading time.
+## Running the tests
 
-### Progress And Analytics
+```bash
+cd backend && uv run pytest        # tokenizer, cleaning, auth, upload, progress, analytics
+cd frontend && npm test            # the reading loop in lib/useRsvp.ts (Vitest)
+```
 
-Fovea saves position, page, and WPM per user and document. Reading sessions are logged with word range, speed, and duration, then summarized into total words read, minutes read, documents completed, streak, best speed, average speed, and a daily trend chart.
+The backend tests use a throwaway database and storage folder, so they never touch your data. The frontend tests use fake timers to check that each word is held for exactly the right time, and that jumps and pauses are logged correctly.
 
 ## API
 
-All routes except `/health` require `Authorization: Bearer <token>`.
+Every route except `/health` needs an `Authorization: Bearer <token>` header. Use the token that `/auth/register` or `/auth/login` returns. The full schema is at `/docs` while the backend is running.
 
-| Method | Route | Purpose |
+| Method | Route | What it does |
 |---|---|---|
 | `POST` | `/auth/register` | Create an account and return a token |
-| `POST` | `/auth/login` | OAuth2 password form login |
-| `GET` | `/auth/me` | Current user |
-| `PATCH` | `/auth/me` | Update preferred speed |
-| `POST` | `/upload` | Upload a PDF |
-| `GET` | `/documents` | List documents with progress |
-| `GET` | `/documents/{id}` | Document metadata |
-| `GET` | `/documents/{id}/content` | Token slice |
-| `DELETE` | `/documents/{id}` | Delete document files and metadata |
-| `POST` | `/progress` | Save reader position |
-| `GET` | `/progress/{document_id}` | Resume reader position |
+| `POST` | `/auth/login` | Sign in (OAuth2 password form) |
+| `GET` | `/auth/me` | The signed-in user |
+| `PATCH` | `/auth/me` | Change the preferred reading speed |
+| `POST` | `/upload` | Upload a PDF and extract its text |
+| `GET` | `/documents` | List documents, each with its reading progress |
+| `GET` | `/documents/{id}` | One document's details |
+| `GET` | `/documents/{id}/content?start=&limit=` | A slice of the document's words (up to 50,000 at a time) |
+| `DELETE` | `/documents/{id}` | Delete a document, its files, progress and reading history |
+| `POST` | `/progress` | Save the reader's position |
+| `GET` | `/progress/{document_id}` | Get the saved position |
 | `POST` | `/sessions` | Log a stretch of reading |
-| `GET` | `/analytics/summary` | Aggregate reading stats and daily trend |
+| `GET` | `/analytics/summary` | Reading totals and speed by day |
 
-Content tokens are compact by design: `{"t": "presentation,", "o": 3, "m": 1.95, "p": 1}`.
+Words are sent in a compact form to keep long documents small:
 
-## Layout
+```json
+{ "t": "presentation,", "o": 3, "m": 1.95, "p": 12 }
+```
+
+`t` is the text, `o` the position of the highlighted letter (counting from 0), `m` the hold multiplier and `p` the page number.
+
+## Project layout
 
 ```
 backend/
   app/
-    main.py            FastAPI app, CORS, routers
-    config.py          Settings
-    db.py  models.py   SQLAlchemy engine and schema
-    schemas.py         Pydantic request/response models
-    security.py        bcrypt hashing, JWT, current-user dependency
-    routers/           auth, documents, progress, analytics
+    main.py              FastAPI app, CORS, router setup
+    config.py            settings, including the JWT secret check
+    db.py, models.py     SQLAlchemy engine and tables
+    schemas.py           request and response models
+    security.py          password hashing, JWTs, current-user dependency
+    routers/             auth, documents, progress, analytics
     services/
-      pdf_service.py   PyMuPDF extraction
-      tokenizer.py     cleaning, ORP, pacing
-  tests/               backend unit and API tests
+      pdf_service.py     text extraction with PyMuPDF
+      tokenizer.py       cleaning, ORP and timing
+  tests/
 frontend/
-  app/                 library, login, read/[id], analytics
-  components/          reader display, controls, upload, charts, nav
-  lib/                 API client, auth context, RSVP engine, types
+  app/                   pages: library, login, read/[id], analytics (Stats)
+  components/            word display, reader controls, upload box, chart, nav bar
+  lib/
+    useRsvp.ts           the reading loop: timing, seeking, logging reading sessions
+    api.ts, auth.tsx     API client and sign-in state
 ```
 
-The RSVP loop lives in `frontend/lib/useRsvp.ts`.
+## Limitations
 
-## Known Limitations
-
-- Uploads are synchronous.
-- Scanned PDFs need OCR first.
-- SQLite and local file storage are intended for single-machine use.
-- There is no frontend test suite yet.
-- Very large token streams are loaded fully into browser memory.
+- **Uploads wait for extraction.** The upload request only returns once the text has been extracted. That takes a few seconds for a large PDF.
+- **No OCR.** Scanned PDFs without a text layer are rejected.
+- **One machine only.** SQLite and local file storage are fine for personal use or a single server, but won't scale past one.
+- **Whole documents in the browser.** Every word of a document is eventually held in browser memory, which is fine for books but not for giant documents.
+- **No database migrations.** Tables are created at startup. If a column is removed, it stays in existing databases, unused.
