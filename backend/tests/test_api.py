@@ -1,4 +1,4 @@
-"""End-to-end tests over the HTTP API, from upload through the adaptive loop."""
+"""End-to-end tests over the HTTP API, from upload through analytics."""
 
 from tests.conftest import make_pdf
 
@@ -6,7 +6,7 @@ from tests.conftest import make_pdf
 def test_health_reports_configuration(client):
     body = client.get("/health").json()
     assert body["status"] == "ok"
-    assert body["ai_enabled"] is False  # no key configured in tests
+    assert body["default_wpm"] > 0
 
 
 def test_register_login_and_identity(client):
@@ -135,14 +135,11 @@ def test_missing_progress_returns_not_found(client, auth, document):
     assert client.get(f"/progress/{document['id']}", headers=auth).status_code == 404
 
 
-def test_the_full_adaptive_loop(client, auth, document):
-    """Read a stretch, take the quiz, and get a speed recommendation back."""
-    document_id = document["id"]
-
-    client.post(
+def test_sessions_are_logged(client, auth, document):
+    created = client.post(
         "/sessions",
         json={
-            "document_id": document_id,
+            "document_id": document["id"],
             "start_index": 0,
             "end_index": 400,
             "wpm": 500,
@@ -150,125 +147,8 @@ def test_the_full_adaptive_loop(client, auth, document):
         },
         headers=auth,
     )
-
-    quiz = client.post(
-        "/quiz",
-        json={
-            "document_id": document_id,
-            "start_index": 0,
-            "end_index": 400,
-            "wpm": 500,
-            "num_questions": 3,
-        },
-        headers=auth,
-    )
-    assert quiz.status_code == 201, quiz.text
-
-    body = quiz.json()
-    assert body["source"] == "heuristic"  # no API key in tests
-    assert len(body["questions"]) >= 1
-    for question in body["questions"]:
-        assert len(question["options"]) == 4
-        # The answer key must not leak to the client before submission.
-        assert question["answer_index"] == -1
-
-    # Answer everything wrong on purpose.
-    wrong = [0] * len(body["questions"])
-    result = client.post(f"/quiz/{body['id']}/attempt", json={"answers": wrong}, headers=auth)
-    assert result.status_code == 200
-
-    scored = result.json()
-    assert 0.0 <= scored["score"] <= 1.0
-    assert len(scored["answer_key"]) == len(body["questions"])
-    assert scored["recommendation"]["samples"] >= 1
-
-    # A poor score at 500 WPM must not recommend going faster.
-    assert scored["recommendation"]["recommended_wpm"] <= 500
-
-
-def test_a_perfect_score_recommends_a_faster_pace(client, auth, document):
-    document_id = document["id"]
-    client.post(
-        "/sessions",
-        json={
-            "document_id": document_id,
-            "start_index": 0,
-            "end_index": 400,
-            "wpm": 300,
-            "duration_seconds": 80.0,
-        },
-        headers=auth,
-    )
-    quiz = client.post(
-        "/quiz",
-        json={
-            "document_id": document_id,
-            "start_index": 0,
-            "end_index": 400,
-            "wpm": 300,
-            "num_questions": 3,
-        },
-        headers=auth,
-    ).json()
-
-    # Ask the server for the key by submitting, then confirm the direction of travel
-    # using a fully correct attempt on a second quiz over the same passage.
-    key = client.post(
-        f"/quiz/{quiz['id']}/attempt",
-        json={"answers": [0] * len(quiz["questions"])},
-        headers=auth,
-    ).json()["answer_key"]
-
-    second = client.post(
-        "/quiz",
-        json={
-            "document_id": document_id,
-            "start_index": 0,
-            "end_index": 400,
-            "wpm": 300,
-            "num_questions": 3,
-        },
-        headers=auth,
-    ).json()
-
-    result = client.post(
-        f"/quiz/{second['id']}/attempt",
-        json={"answers": key[: len(second["questions"])]},
-        headers=auth,
-    ).json()
-
-    assert result["score"] == 1.0
-    assert result["recommendation"]["recommended_wpm"] > 300
-    assert result["recommendation"]["rationale"]
-
-
-def test_quiz_needs_enough_material(client, auth, document):
-    response = client.post(
-        "/quiz",
-        json={"document_id": document["id"], "start_index": 0, "end_index": 10, "wpm": 300},
-        headers=auth,
-    )
-    assert response.status_code == 400
-
-
-def test_summary_falls_back_to_extraction_without_a_key(client, auth, document):
-    response = client.post(f"/documents/{document['id']}/summary", headers=auth)
-    assert response.status_code == 200
-
-    body = response.json()
-    assert body["source"] == "heuristic"
-    assert len(body["summary"]) > 40
-
-    # Second call is served from cache.
-    cached = client.post(f"/documents/{document['id']}/summary", headers=auth).json()
-    assert cached["summary"] == body["summary"]
-
-
-def test_ai_status_is_honest_about_the_provider(client):
-    body = client.get("/ai/status").json()
-    assert body["provider"] == "sarvam"
-    assert body["enabled"] is False
-    assert "fallback" in body
+    assert created.status_code == 201
+    assert created.json()["words_read"] == 400
 
 
 def test_analytics_aggregate_reading_activity(client, auth, document):
@@ -299,7 +179,6 @@ def test_analytics_aggregate_reading_activity(client, auth, document):
 def test_analytics_are_empty_for_a_new_reader(client, auth):
     body = client.get("/analytics/summary", headers=auth).json()
     assert body["words_read"] == 0
-    assert body["average_comprehension"] is None
     assert body["current_streak_days"] == 0
 
 

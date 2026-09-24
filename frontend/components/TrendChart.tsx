@@ -5,27 +5,21 @@ import { useMemo, useRef, useState } from "react";
 export interface TrendPoint {
   label: string;
   value: number | null;
-  meta?: string;
 }
 
 interface Props {
   title: string;
   points: TrendPoint[];
-  color: string;
   format: (value: number) => string;
-  emptyMessage: string;
+  unit: string;
 }
 
 const W = 720;
 const H = 220;
-const PAD = { top: 20, right: 56, bottom: 30, left: 48 };
+const PAD = { top: 24, right: 16, bottom: 28, left: 44 };
 
-/**
- * One measure over time. Speed and comprehension live in separate charts on
- * purpose - they are different scales, and a second y-axis would invite false
- * comparisons between them.
- */
-export function TrendChart({ title, points, color, format, emptyMessage }: Props) {
+/** One measure over time, drawn as a plain line with a table fallback. */
+export function TrendChart({ title, points, format, unit }: Props) {
   const [hover, setHover] = useState<number | null>(null);
   const [showTable, setShowTable] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -53,15 +47,18 @@ export function TrendChart({ title, points, color, format, emptyMessage }: Props
       data.length === 1 ? PAD.left + plotW / 2 : PAD.left + (index / (data.length - 1)) * plotW;
     const y = (value: number) => PAD.top + plotH - ((value - min) / (max - min)) * plotH;
 
-    return { x, y, min, max, plotW, plotH };
+    return { x, y, min, max };
   }, [data]);
 
-  if (!geometry) {
+  if (!geometry) return null;
+
+  // A line needs two points; one day on its own is just a dot in empty space.
+  if (data.length < 2) {
     return (
-      <figure className="rounded-xl border border-line bg-surface p-5">
-        <figcaption className="text-sm font-medium">{title}</figcaption>
-        <p className="py-12 text-center text-sm text-muted">{emptyMessage}</p>
-      </figure>
+      <p className="text-sm text-muted">
+        <span className="font-medium text-ink">{title}</span> appears after a second day of
+        reading.
+      </p>
     );
   }
 
@@ -75,7 +72,7 @@ export function TrendChart({ title, points, color, format, emptyMessage }: Props
 
   const onMove = (event: React.PointerEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
-    if (!svg || data.length === 0) return;
+    if (!svg) return;
 
     const bounds = svg.getBoundingClientRect();
     const localX = ((event.clientX - bounds.left) / bounds.width) * W;
@@ -93,32 +90,39 @@ export function TrendChart({ title, points, color, format, emptyMessage }: Props
   };
 
   return (
-    <figure className="rounded-xl border border-line bg-surface p-5">
-      <div className="mb-1 flex items-baseline justify-between gap-3">
-        <figcaption className="text-sm font-medium">{title}</figcaption>
+    <figure>
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <figcaption>
+          <span className="font-medium">{title}</span>
+          <span className="ml-2 text-sm text-faint">
+            {active
+              ? `${active.label}: ${format(active.value)} ${unit}`
+              : `${data.length} ${data.length === 1 ? "day" : "days"}, latest ${format(last.value)} ${unit}`}
+          </span>
+        </figcaption>
         <button
           type="button"
           onClick={() => setShowTable((current) => !current)}
-          className="focus-ring rounded text-xs text-muted hover:text-text"
+          className="rounded-sm text-sm text-muted underline decoration-1 underline-offset-4 hover:text-ink"
         >
-          {showTable ? "Show chart" : "Show data"}
+          {showTable ? "Show chart" : "Show as table"}
         </button>
       </div>
 
       {showTable ? (
-        <div className="max-h-56 overflow-y-auto">
+        <div className="max-h-64 overflow-y-auto">
           <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 bg-surface text-xs uppercase text-muted">
-              <tr>
-                <th className="py-1.5 font-medium">Date</th>
-                <th className="py-1.5 font-medium">{title}</th>
+            <thead className="sticky top-0 bg-paper text-muted">
+              <tr className="border-b border-ink">
+                <th className="py-2 font-normal">Day</th>
+                <th className="py-2 text-right font-normal">Speed ({unit})</th>
               </tr>
             </thead>
-            <tbody className="text-text/90">
-              {data.map((point) => (
-                <tr key={point.label} className="border-t border-line/60">
+            <tbody>
+              {data.map((point, index) => (
+                <tr key={index} className="border-b border-rule">
                   <td className="py-1.5">{point.label}</td>
-                  <td className="py-1.5 tabular-nums">{format(point.value)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{format(point.value)}</td>
                 </tr>
               ))}
             </tbody>
@@ -128,13 +132,12 @@ export function TrendChart({ title, points, color, format, emptyMessage }: Props
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
-          className="h-auto w-full touch-none"
+          className="h-auto w-full touch-none text-ink"
           role="img"
-          aria-label={`${title}. ${data.length} data points from ${data[0].label} to ${last.label}.`}
+          aria-label={`${title}. ${data.length} days from ${data[0].label} to ${last.label}.`}
           onPointerMove={onMove}
           onPointerLeave={() => setHover(null)}
         >
-          {/* Recessive gridlines and scale labels. */}
           {[max, (max + min) / 2, min].map((value, index) => {
             const gy = y(value);
             return (
@@ -144,14 +147,14 @@ export function TrendChart({ title, points, color, format, emptyMessage }: Props
                   x2={W - PAD.right}
                   y1={gy}
                   y2={gy}
-                  stroke="var(--color-line)"
+                  stroke="var(--rule)"
                   strokeWidth={1}
                 />
                 <text
                   x={PAD.left - 8}
                   y={gy + 4}
                   textAnchor="end"
-                  className="fill-[var(--color-muted)] text-[11px] tabular-nums"
+                  className="fill-faint text-[11px] tabular-nums"
                 >
                   {format(value)}
                 </text>
@@ -159,78 +162,45 @@ export function TrendChart({ title, points, color, format, emptyMessage }: Props
             );
           })}
 
-          <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+          <path
+            d={path}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
 
           {data.map((point, index) => (
             <circle
-              key={point.label}
+              key={index}
               cx={x(index)}
               cy={y(point.value)}
-              r={hover === index ? 5.5 : 4}
-              fill={color}
-              stroke="var(--color-surface)"
-              strokeWidth={2}
+              r={hover === index ? 4.5 : 2.5}
+              fill={hover === index ? "var(--orp)" : "currentColor"}
             />
           ))}
 
-          {/* Only the latest point is labelled directly - a number on every point is noise. */}
-          <text
-            x={x(data.length - 1) + 10}
-            y={y(last.value) + 4}
-            className="fill-[var(--color-text)] text-[12px] tabular-nums"
-          >
-            {format(last.value)}
-          </text>
-
-          <text
-            x={PAD.left}
-            y={H - 8}
-            className="fill-[var(--color-muted)] text-[11px]"
-          >
+          <text x={PAD.left} y={H - 6} className="fill-faint text-[11px]">
             {data[0].label}
           </text>
           {data.length > 1 && (
-            <text
-              x={W - PAD.right}
-              y={H - 8}
-              textAnchor="end"
-              className="fill-[var(--color-muted)] text-[11px]"
-            >
+            <text x={W - PAD.right} y={H - 6} textAnchor="end" className="fill-faint text-[11px]">
               {last.label}
             </text>
           )}
 
-          {active && hover !== null && (
-            <g pointerEvents="none">
-              <line
-                x1={x(hover)}
-                x2={x(hover)}
-                y1={PAD.top}
-                y2={H - PAD.bottom}
-                stroke="var(--color-muted)"
-                strokeWidth={1}
-                strokeDasharray="3 3"
-              />
-              <g
-                transform={`translate(${Math.min(Math.max(x(hover) - 60, 4), W - 124)}, ${PAD.top - 12})`}
-              >
-                <rect
-                  width={120}
-                  height={26}
-                  rx={6}
-                  fill="var(--color-raised)"
-                  stroke="var(--color-line)"
-                />
-                <text
-                  x={60}
-                  y={17}
-                  textAnchor="middle"
-                  className="fill-[var(--color-text)] text-[12px] tabular-nums"
-                >
-                  {active.label} · {format(active.value)}
-                </text>
-              </g>
-            </g>
+          {hover !== null && (
+            <line
+              x1={x(hover)}
+              x2={x(hover)}
+              y1={PAD.top}
+              y2={H - PAD.bottom}
+              stroke="var(--ink-faint)"
+              strokeWidth={1}
+              strokeDasharray="2 3"
+              pointerEvents="none"
+            />
           )}
         </svg>
       )}

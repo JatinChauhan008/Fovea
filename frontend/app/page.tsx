@@ -1,52 +1,75 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { api } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
-import type { Doc, Recommendation } from "@/lib/types";
+import { DEFAULT_WPM } from "@/lib/constants";
+import type { Doc } from "@/lib/types";
 
-function DocumentCard({
+/** Matches the backend's completion threshold for analytics. */
+const FINISHED_PERCENT = 95;
+
+function readingTime(words: number, wpm: number) {
+  const mins = Math.max(1, Math.round(words / wpm));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+}
+
+function DocumentRow({
   doc,
+  wpm,
   onDelete,
 }: {
   doc: Doc;
-  onDelete: (id: number) => void;
+  wpm: number;
+  onDelete: (doc: Doc) => void;
 }) {
   const percent = doc.progress?.percent_complete ?? 0;
-  const started = percent > 0.5;
+  const finished = percent >= FINISHED_PERCENT;
+  const started = !finished && (doc.progress?.word_index ?? 0) > 0;
 
   return (
-    <li className="group relative rounded-xl border border-line bg-surface p-5 transition-colors hover:border-brand/30">
-      <Link href={`/read/${doc.id}`} className="focus-ring block rounded">
-        <h3 className="truncate pr-8 font-medium" title={doc.title}>
+    <li className="group flex items-start gap-4 border-b border-rule py-4">
+      <div className="min-w-0 flex-1">
+        <Link
+          href={`/read/${doc.id}`}
+          className="block truncate rounded-sm font-serif text-lg leading-snug hover:underline hover:decoration-1 hover:underline-offset-4"
+          title={doc.title}
+        >
           {doc.title}
-        </h3>
-        <p className="mt-1 text-xs text-muted">
-          {doc.page_count} pages &middot; {doc.word_count.toLocaleString()} words
+        </Link>
+        <p className="mt-1 text-sm text-faint">
+          {doc.page_count} {doc.page_count === 1 ? "page" : "pages"}, {doc.word_count.toLocaleString()} words,
+          about {readingTime(doc.word_count, wpm)} at {wpm} wpm
         </p>
+      </div>
 
-        <div className="mt-4 h-1 w-full overflow-hidden rounded-full bg-line">
-          <div
-            className="h-full rounded-full bg-brand transition-[width]"
-            style={{ width: `${Math.min(percent, 100)}%` }}
-          />
-        </div>
-        <p className="mt-2 text-xs text-muted">
-          {started
-            ? `${percent.toFixed(0)}% read · continue at word ${doc.progress?.word_index.toLocaleString()}`
-            : "Not started"}
-        </p>
-      </Link>
+      <div className="w-28 shrink-0 pt-1.5 text-right text-sm tabular-nums">
+        {finished ? (
+          <span className="text-muted">Finished</span>
+        ) : started ? (
+          <>
+            <span>{Math.floor(percent)}%</span>
+            <span className="mt-2 block h-px w-full bg-rule">
+              <span className="block h-px bg-ink" style={{ width: `${percent}%` }} />
+            </span>
+          </>
+        ) : (
+          <span className="text-faint">Not started</span>
+        )}
+      </div>
 
       <button
         type="button"
-        onClick={() => onDelete(doc.id)}
+        onClick={() => onDelete(doc)}
         aria-label={`Delete ${doc.title}`}
-        className="focus-ring absolute right-3 top-3 rounded p-1 text-muted opacity-0 transition-opacity hover:text-orp focus-visible:opacity-100 group-hover:opacity-100"
+        className="shrink-0 rounded-sm pt-1.5 text-sm text-faint opacity-100 hover:text-orp focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
       >
-        &times;
+        Delete
       </button>
     </li>
   );
@@ -55,92 +78,90 @@ function DocumentCard({
 export default function LibraryPage() {
   const { user, loading } = useRequireAuth();
   const [docs, setDocs] = useState<Doc[]>([]);
-  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
 
-  const refresh = useCallback(() => {
+  useEffect(() => {
+    if (!user) return;
     api
       .documents()
       .then(setDocs)
       .catch((err) => setError(err.message))
       .finally(() => setFetching(false));
-    api.recommendation().then(setRecommendation).catch(() => {});
-  }, []);
+  }, [user]);
 
-  useEffect(() => {
-    if (user) refresh();
-  }, [user, refresh]);
-
-  const remove = async (id: number) => {
-    const target = docs.find((doc) => doc.id === id);
-    if (!window.confirm(`Delete "${target?.title}"? This cannot be undone.`)) return;
-
-    await api.deleteDocument(id);
-    setDocs((current) => current.filter((doc) => doc.id !== id));
+  const remove = async (target: Doc) => {
+    if (!window.confirm(`Delete "${target.title}"? Your place in it and its reading history go too.`)) {
+      return;
+    }
+    try {
+      await api.deleteDocument(target.id);
+      setDocs((current) => current.filter((doc) => doc.id !== target.id));
+    } catch (err) {
+      setError(`Could not delete "${target.title}": ${(err as Error).message}`);
+    }
   };
 
-  if (loading || !user) {
-    return <p className="py-20 text-center text-muted">Loading…</p>;
-  }
+  // The document touched most recently that still has words left in it.
+  const lastRead = useMemo(() => {
+    const open = docs.filter(
+      (doc) =>
+        doc.progress &&
+        doc.progress.word_index > 0 &&
+        doc.progress.percent_complete < FINISHED_PERCENT,
+    );
+    open.sort((a, b) => b.progress!.updated_at.localeCompare(a.progress!.updated_at));
+    return open[0] ?? null;
+  }, [docs]);
 
-  const inProgress = docs.filter(
-    (doc) => (doc.progress?.percent_complete ?? 0) > 0.5 &&
-      (doc.progress?.percent_complete ?? 0) < 95,
-  );
+  if (loading || !user) return null;
+
+  const wpm = user.preferred_wpm || DEFAULT_WPM;
 
   return (
-    <div className="space-y-10 py-10">
-      <section>
-        <h1 className="text-3xl font-semibold tracking-tight">Your library</h1>
-        <p className="mt-2 text-muted">
-          {recommendation && recommendation.confidence !== "none"
-            ? `Fovea suggests ${recommendation.recommended_wpm} WPM for you. ${recommendation.rationale}`
-            : "Upload a PDF to start reading. Take a comprehension check afterwards and Fovea will tune your speed."}
-        </p>
-      </section>
+    <div className="pt-8">
+      <h1 className="font-serif text-3xl font-semibold tracking-tight">Library</h1>
 
-      <UploadDropzone
-        onUploaded={(doc) => {
-          setDocs((current) => [doc, ...current]);
-          setError(null);
-        }}
-      />
+      {lastRead?.progress && (
+        <p className="mt-3 text-muted">
+          You were on page {lastRead.progress.page} of{" "}
+          <Link
+            href={`/read/${lastRead.id}`}
+            className="rounded-sm text-ink underline decoration-1 underline-offset-4 hover:text-orp"
+          >
+            {lastRead.title}
+          </Link>
+          .
+        </p>
+      )}
+
+      <div className="mt-8">
+        <UploadDropzone
+          onUploaded={(doc) => {
+            setDocs((current) => [doc, ...current]);
+            setError(null);
+          }}
+        />
+      </div>
 
       {error && (
-        <p className="rounded-lg border border-orp/40 bg-orp/10 p-3 text-sm text-orp">
+        <p role="alert" className="mt-4 text-sm text-orp">
           {error}
         </p>
       )}
 
-      {inProgress.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-            Continue reading
-          </h2>
-          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {inProgress.map((doc) => (
-              <DocumentCard key={doc.id} doc={doc} onDelete={remove} />
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <section>
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted">
-          All documents
-        </h2>
-
+      <section className="mt-10">
         {fetching ? (
-          <p className="text-muted">Loading documents…</p>
+          <p className="text-sm text-faint">Loading your documents…</p>
         ) : docs.length === 0 ? (
-          <p className="rounded-xl border border-line bg-surface p-8 text-center text-muted">
-            Nothing here yet. Your uploaded PDFs will appear in this list.
+          <p className="max-w-prose text-muted">
+            Nothing here yet. Add a PDF and Fovea will pull the text out of it, then show it to you
+            one word at a time, with the letter your eye should land on marked in red.
           </p>
         ) : (
-          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <ul className="border-t border-rule">
             {docs.map((doc) => (
-              <DocumentCard key={doc.id} doc={doc} onDelete={remove} />
+              <DocumentRow key={doc.id} doc={doc} wpm={wpm} onDelete={remove} />
             ))}
           </ul>
         )}

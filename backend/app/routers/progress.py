@@ -2,16 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
 from app.db import get_db
 from app.models import Progress, ReadingSession, User
 from app.routers.documents import get_owned_document, progress_out
-from app.schemas import ProgressIn, ProgressOut, Recommendation, SessionIn, SessionOut
+from app.schemas import ProgressIn, ProgressOut, SessionIn, SessionOut
 from app.security import get_current_user
-from app.services.adaptive import Sample, recommend
 
 router = APIRouter(tags=["progress"])
-settings = get_settings()
 
 
 @router.post("/progress", response_model=ProgressOut)
@@ -70,7 +67,7 @@ def record_session(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SessionOut:
-    """Log a stretch of reading. This is the raw signal behind analytics and adaptation."""
+    """Log a stretch of reading. This is the raw signal behind analytics."""
     document = get_owned_document(payload.document_id, user, db)
     words_read = max(payload.end_index - payload.start_index, 0)
 
@@ -82,38 +79,9 @@ def record_session(
         words_read=words_read,
         wpm=payload.wpm,
         duration_seconds=payload.duration_seconds,
-        comprehension=payload.comprehension,
     )
     db.add(session)
     db.commit()
     db.refresh(session)
 
     return SessionOut.model_validate(session)
-
-
-@router.get("/adaptive/recommendation", response_model=Recommendation)
-def get_recommendation(
-    document_id: int | None = None,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> Recommendation:
-    """Recommend a reading speed from this reader's scored sessions."""
-    query = (
-        select(ReadingSession)
-        .where(ReadingSession.user_id == user.id, ReadingSession.comprehension.is_not(None))
-        .order_by(ReadingSession.created_at.asc())
-    )
-    if document_id is not None:
-        get_owned_document(document_id, user, db)
-        query = query.where(ReadingSession.document_id == document_id)
-
-    samples = [Sample(wpm=s.wpm, comprehension=s.comprehension or 0.0) for s in db.scalars(query)]
-
-    result = recommend(
-        samples,
-        current_wpm=user.preferred_wpm,
-        min_wpm=settings.min_wpm,
-        max_wpm=settings.max_wpm,
-        default_wpm=settings.default_wpm,
-    )
-    return Recommendation(**result)

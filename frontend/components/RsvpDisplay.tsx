@@ -8,7 +8,7 @@ interface Props {
   playing: boolean;
 }
 
-const CONTEXT_WORDS = 7;
+const CONTEXT_WORDS = 8;
 
 /**
  * One word, held still.
@@ -21,53 +21,46 @@ const CONTEXT_WORDS = 7;
 export function RsvpDisplay({ tokens, index, playing }: Props) {
   const token = tokens[index];
 
-  if (!token) {
-    return (
-      <div className="flex h-56 items-center justify-center text-muted">
-        Nothing to read yet.
-      </div>
-    );
-  }
+  const orp = token ? Math.min(token.o, token.t.length - 1) : 0;
+  const before = token?.t.slice(0, orp) ?? "";
+  const letter = token?.t.slice(orp, orp + 1) ?? "";
+  const after = token?.t.slice(orp + 1) ?? "";
 
-  const orp = Math.min(token.o, token.t.length - 1);
-  const before = token.t.slice(0, orp);
-  const letter = token.t.slice(orp, orp + 1);
-  const after = token.t.slice(orp + 1);
-
-  const context = tokens
-    .slice(Math.max(0, index - CONTEXT_WORDS), index + CONTEXT_WORDS + 1)
-    .map((item) => item.t)
-    .join(" ");
+  const lead = tokens.slice(Math.max(0, index - CONTEXT_WORDS), index).map((item) => item.t);
+  const trail = tokens.slice(index + 1, index + CONTEXT_WORDS + 1).map((item) => item.t);
 
   return (
     <div className="select-none">
-      <div className="relative">
-        {/* Focus guides mark where the eye should rest. */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center">
-          <span className="h-4 w-px bg-line" />
-        </div>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center">
-          <span className="h-4 w-px bg-line" />
-        </div>
+      {/* Reticle: two rules with a notch marking the column the eye rests on. */}
+      <div className="relative border-y border-rule">
+        <span aria-hidden className="absolute left-1/2 top-0 h-3 w-px bg-ink" />
+        <span aria-hidden className="absolute bottom-0 left-1/2 h-3 w-px bg-ink" />
 
         <div
-          className="reader-word grid grid-cols-[1fr_auto_1fr] items-center py-10 text-5xl leading-none tracking-tight sm:text-6xl md:py-14 md:text-7xl"
+          className="reader-word grid grid-cols-[1fr_auto_1fr] items-baseline py-12 text-5xl leading-none sm:py-14 sm:text-6xl"
           aria-live={playing ? "off" : "polite"}
           aria-atomic="true"
         >
-          <span className="justify-self-end text-text">{before}</span>
-          <span className="text-orp">{letter}</span>
-          <span className="justify-self-start text-text">{after}</span>
+          {token ? (
+            <>
+              <span className="justify-self-end">{before}</span>
+              <span className="text-orp">{letter}</span>
+              <span className="justify-self-start">{after}</span>
+            </>
+          ) : (
+            <span className="col-span-3 text-center text-base text-faint">No text to show.</span>
+          )}
         </div>
       </div>
 
       {/* When paused, show the surrounding words so the reader can re-orient. */}
       <p
-        className={`mx-auto mt-2 max-w-2xl text-center text-sm leading-relaxed text-muted transition-opacity duration-200 ${
+        className={`mx-auto mt-6 max-w-xl text-center font-serif leading-relaxed text-faint transition-opacity duration-200 ${
           playing ? "opacity-0" : "opacity-100"
         }`}
+        aria-hidden={playing}
       >
-        {context}
+        {lead.join(" ")} <span className="text-ink">{token?.t}</span> {trail.join(" ")}
       </p>
     </div>
   );

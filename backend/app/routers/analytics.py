@@ -59,7 +59,6 @@ def summary(
 
     words_read = sum(s.words_read for s in sessions)
     seconds = sum(s.duration_seconds for s in sessions)
-    scored = [s for s in sessions if s.comprehension is not None]
 
     # Weight speed by words actually read, so a 30-second burst does not
     # outweigh a twenty-minute session.
@@ -82,14 +81,10 @@ def summary(
             if day_words
             else sum(r.wpm for r in rows) / len(rows)
         )
-        day_scored = [r.comprehension for r in rows if r.comprehension is not None]
         trend.append(
             SpeedPoint(
                 date=day.isoformat(),
                 wpm=round(day_wpm, 1),
-                comprehension=(
-                    round(sum(day_scored) / len(day_scored), 3) if day_scored else None
-                ),
                 words=day_words,
             )
         )
@@ -101,9 +96,6 @@ def summary(
         minutes_read=round(seconds / 60, 1),
         average_wpm=round(average_wpm, 1),
         best_wpm=float(max((s.wpm for s in sessions), default=0)),
-        average_comprehension=(
-            round(sum(s.comprehension or 0 for s in scored) / len(scored), 3) if scored else None
-        ),
         current_streak_days=_streak({s.created_at.date() for s in sessions}),
         trend=trend,
     )

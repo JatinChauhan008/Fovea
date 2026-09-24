@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { QuizPanel } from "@/components/QuizPanel";
 import { ReaderControls } from "@/components/ReaderControls";
 import { RsvpDisplay } from "@/components/RsvpDisplay";
 import { api } from "@/lib/api";
@@ -11,11 +10,10 @@ import { useRequireAuth } from "@/lib/auth";
 import {
   CONTENT_CHUNK,
   DEFAULT_WPM,
-  MIN_QUIZ_WORDS,
   PROGRESS_SAVE_INTERVAL_MS,
 } from "@/lib/constants";
 import type { Doc, WordToken } from "@/lib/types";
-import { useRsvp, type ReadingStretch } from "@/lib/useRsvp";
+import { type ReadingStretch, useRsvp } from "@/lib/useRsvp";
 
 interface Loaded {
   doc: Doc;
@@ -24,6 +22,9 @@ interface Loaded {
   startIndex: number;
   startWpm: number;
 }
+
+const MIN_WPM = 100;
+const MAX_WPM = 900;
 
 export default function ReaderPage() {
   const params = useParams<{ id: string }>();
@@ -34,43 +35,46 @@ export default function ReaderPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user || Number.isNaN(documentId)) return;
+    if (!user) return;
+    if (!Number.isInteger(documentId)) {
+      queueMicrotask(() => setError("That isn't a valid document link."));
+      return;
+    }
     let cancelled = false;
 
     (async () => {
       try {
         const doc = await api.document(documentId);
-        const first = await api.content(documentId, 0, CONTENT_CHUNK);
-        if (cancelled) return;
+        const tokens: WordToken[] = [];
+        let total = Infinity;
 
-        // Accumulate chunks in a plain array so React state isn't updated (and
-        // array identity doesn't change) on every chunk. A new identity on every
-        // append would re-render useRsvp/RsvpDisplay on each network round-trip,
-        // causing O(n²) allocations across a long document.
-        const accumulated: WordToken[] = [...first.tokens];
+        // Load everything up to the saved position before showing the reader, so
+        // resuming deep into a long document lands on the right word.
+        const resumeAt = doc.progress?.word_index ?? 0;
+        while (tokens.length <= resumeAt && tokens.length < total) {
+          const chunk = await api.content(documentId, tokens.length, CONTENT_CHUNK);
+          if (cancelled) return;
+          if (chunk.tokens.length === 0) break;
+          tokens.push(...chunk.tokens);
+          total = chunk.total;
+        }
+        if (total === Infinity) total = tokens.length;
 
         setLoaded({
           doc,
-          tokens: accumulated,
-          total: first.total,
-          startIndex: doc.progress?.word_index ?? 0,
+          tokens: [...tokens],
+          total,
+          startIndex: Math.min(resumeAt, Math.max(tokens.length - 1, 0)),
           startWpm: doc.progress?.wpm ?? user.preferred_wpm ?? DEFAULT_WPM,
         });
 
-        // Stream remaining chunks into the accumulator, then flush into state once
-        // all chunks have arrived so the array identity only changes once.
-        let fetched = first.tokens.length;
-        while (fetched < first.total && !cancelled) {
-          const next = await api.content(documentId, fetched, CONTENT_CHUNK);
+        // The rest streams in behind the reader, so reading starts immediately.
+        while (tokens.length < total && !cancelled) {
+          const next = await api.content(documentId, tokens.length, CONTENT_CHUNK);
           if (cancelled || next.tokens.length === 0) break;
-          for (const tok of next.tokens) accumulated.push(tok);
-          fetched += next.tokens.length;
-        }
-
-        if (!cancelled && fetched >= first.total) {
-          // Replace the tokens array once with the fully-loaded stable copy.
+          tokens.push(...next.tokens);
           setLoaded((current) =>
-            current ? { ...current, tokens: [...accumulated] } : current,
+            current ? { ...current, tokens: [...current.tokens, ...next.tokens] } : current,
           );
         }
       } catch (err) {
@@ -83,35 +87,50 @@ export default function ReaderPage() {
     };
   }, [documentId, user]);
 
-  if (loading || !user) return <p className="py-20 text-center text-muted">Loading…</p>;
-
   if (error) {
     return (
-      <div className="py-20 text-center">
+      <div className="pt-24 text-center">
         <p className="text-orp">{error}</p>
-        <Link href="/" className="focus-ring mt-4 inline-block rounded text-brand hover:underline">
-          Back to library
+        <Link href="/" className="mt-4 inline-block rounded-sm text-muted underline decoration-1 underline-offset-4 hover:text-ink">
+          Back to the library
         </Link>
       </div>
     );
   }
 
-  if (!loaded) return <p className="py-20 text-center text-muted">Preparing document…</p>;
+  if (loading || !user || !loaded) {
+    return <p className="pt-24 text-center text-sm text-faint">Opening document…</p>;
+  }
 
   return <Reader key={loaded.doc.id} {...loaded} />;
 }
 
 function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
-  // Reaching the end of the document closes out the current stretch. The
-  // handler is defined below, so the reader reaches it through this ref.
-  const onFinishRef = useRef<() => void>(() => {});
+  // Keep the latest position available to the progress saver without
+  // re-creating the interval on every word.
+  const positionRef = useRef({ index: startIndex, page: 1, wpm: startWpm });
 
-  const rsvp = useRsvp({
-    tokens,
-    initialIndex: startIndex,
-    initialWpm: startWpm,
-    onFinish: () => onFinishRef.current(),
-  });
+  const saveProgress = useCallback(() => {
+    const { index, page, wpm } = positionRef.current;
+    api.saveProgress(doc.id, index, page, wpm).catch(() => {});
+  }, [doc.id]);
+
+  const logStretch = useCallback(
+    (stretch: ReadingStretch) => {
+      api
+        .recordSession({
+          document_id: doc.id,
+          start_index: stretch.startIndex,
+          end_index: stretch.endIndex,
+          wpm: stretch.wpm,
+          duration_seconds: stretch.seconds,
+        })
+        .catch(() => {});
+      saveProgress();
+    },
+    [doc.id, saveProgress],
+  );
+
   const {
     index,
     wpm,
@@ -119,7 +138,7 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
     finished,
     page,
     percent,
-    stats,
+    minutesLeft,
     setWpm,
     toggle,
     pause,
@@ -128,26 +147,18 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
     stepForward,
     stepSentence,
     jumpToPage,
-    consumeStretch,
-  } = rsvp;
+  } = useRsvp({
+    tokens,
+    totalWords: total,
+    initialIndex: startIndex,
+    initialWpm: startWpm,
+    onStretchEnd: logStretch,
+    onFinish: saveProgress,
+  });
 
-  const [stretch, setStretch] = useState<ReadingStretch | null>(null);
-  const [quizOpen, setQuizOpen] = useState(false);
-  const [summary, setSummary] = useState<string | null>(doc.summary);
-  const [summarising, setSummarising] = useState(false);
-  const [showSummary, setShowSummary] = useState(false);
-
-  // Keep the latest position available to the progress saver without
-  // re-creating the interval on every word.
-  const positionRef = useRef({ index, page, wpm });
   useEffect(() => {
     positionRef.current = { index, page, wpm };
   }, [index, page, wpm]);
-
-  const saveProgress = useCallback(() => {
-    const { index: at, page: onPage, wpm: atWpm } = positionRef.current;
-    api.saveProgress(doc.id, at, onPage, atWpm).catch(() => {});
-  }, [doc.id]);
 
   // Periodic autosave while reading, plus a final save on the way out.
   useEffect(() => {
@@ -158,57 +169,22 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
 
   useEffect(() => saveProgress, [saveProgress]);
 
-  /** Close out the stretch just read: save it, log it, and remember its range. */
-  const finishStretch = useCallback(() => {
-    const done = consumeStretch();
-    saveProgress();
-    if (!done) return;
-
-    setStretch(done);
-    api
-      .recordSession({
-        document_id: doc.id,
-        start_index: done.startIndex,
-        end_index: done.endIndex,
-        wpm,
-        duration_seconds: done.seconds,
-      })
-      .catch(() => {});
-  }, [consumeStretch, doc.id, saveProgress, wpm]);
-
-  const handleToggle = useCallback(() => {
-    if (playing) {
-      pause();
-      finishStretch();
-    } else {
-      toggle();
-    }
-  }, [playing, pause, finishStretch, toggle]);
-
-  useEffect(() => {
-    onFinishRef.current = finishStretch;
-  }, [finishStretch]);
-
   // Browsers throttle timers in hidden tabs, so a reader who switches away would
   // come back to a position that crept forward at about one word per second -
   // and to a logged session claiming they read at that speed. Stop cleanly instead.
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.hidden && playing) {
-        pause();
-        finishStretch();
-      }
+      if (document.hidden && playing) pause();
     };
-
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [playing, pause, finishStretch]);
+  }, [playing, pause]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      const tag = target.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const tag = (event.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
       switch (event.key) {
         case " ":
@@ -216,7 +192,7 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
           // would toggle twice and leave the reader exactly where it started.
           if (tag === "BUTTON") return;
           event.preventDefault();
-          handleToggle();
+          toggle();
           break;
         case "ArrowLeft":
           event.preventDefault();
@@ -230,14 +206,14 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
           break;
         case "ArrowUp":
           event.preventDefault();
-          setWpm(Math.min(900, wpm + 25));
+          setWpm(Math.min(MAX_WPM, wpm + 25));
           break;
         case "ArrowDown":
           event.preventDefault();
-          setWpm(Math.max(100, wpm - 25));
+          setWpm(Math.max(MIN_WPM, wpm - 25));
           break;
         case "Escape":
-          if (playing) handleToggle();
+          if (playing) pause();
           break;
         default:
           break;
@@ -246,102 +222,36 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleToggle, playing, setWpm, stepBack, stepForward, stepSentence, wpm]);
-
-  const summarise = async () => {
-    setShowSummary(true);
-    if (summary) return;
-    setSummarising(true);
-    try {
-      setSummary((await api.summarize(doc.id)).summary);
-    } catch (err) {
-      setSummary(`Could not generate a summary: ${(err as Error).message}`);
-    } finally {
-      setSummarising(false);
-    }
-  };
-
-  const quizRange = stretch ?? {
-    startIndex: Math.max(0, index - 400),
-    endIndex: index,
-    seconds: 0,
-  };
-  const quizReady = quizRange.endIndex - quizRange.startIndex >= MIN_QUIZ_WORDS;
+  }, [pause, playing, setWpm, stepBack, stepForward, stepSentence, toggle, wpm]);
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center gap-4 py-5">
-        <Link
-          href="/"
-          className="focus-ring rounded-md border border-line px-3 py-1.5 text-sm text-muted hover:text-text"
-        >
-          &larr; Library
+    <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col">
+      <header className="flex items-baseline gap-4 pt-6">
+        <Link href="/" className="shrink-0 rounded-sm text-sm text-muted hover:text-ink">
+          ← Library
         </Link>
-        <h1 className="truncate text-sm text-muted" title={doc.title}>
+        <h1 className="min-w-0 flex-1 truncate text-center font-serif text-muted" title={doc.title}>
           {doc.title}
         </h1>
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={summarise}
-            className="focus-ring rounded-md border border-line px-3 py-1.5 text-sm text-muted hover:text-text"
-          >
-            Summary
-          </button>
-          <button
-            type="button"
-            disabled={!quizReady}
-            onClick={() => {
-              if (playing) handleToggle();
-              setQuizOpen(true);
-            }}
-            title={
-              quizReady
-                ? "Check what you retained"
-                : `Read at least ${MIN_QUIZ_WORDS} words first`
-            }
-            className="focus-ring rounded-md border border-line px-3 py-1.5 text-sm text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Comprehension check
-          </button>
-        </div>
+        <span className="shrink-0 text-sm tabular-nums text-faint">{Math.floor(percent)}%</span>
       </header>
 
-      {showSummary && (
-        <div className="mb-6 rounded-xl border border-line bg-surface p-5">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
-              Summary
-            </h2>
-            <button
-              type="button"
-              onClick={() => setShowSummary(false)}
-              className="focus-ring rounded px-2 text-muted hover:text-text"
-              aria-label="Hide summary"
-            >
-              &times;
-            </button>
-          </div>
-          <p className="text-sm leading-relaxed text-text/90">
-            {summarising ? "Reading the document…" : summary}
-          </p>
-        </div>
-      )}
-
-      <div className="flex flex-1 flex-col justify-center">
+      <div className="flex flex-1 flex-col justify-center py-10">
         <RsvpDisplay tokens={tokens} index={index} playing={playing} />
 
-        <div className="mx-auto mt-10 w-full max-w-2xl">
+        <div className="mt-12">
           <ReaderControls
             playing={playing}
             wpm={wpm}
+            minWpm={MIN_WPM}
+            maxWpm={MAX_WPM}
             index={index}
             total={total}
+            loadedCount={tokens.length}
             page={page}
             pageCount={doc.page_count}
-            percent={percent}
-            minutesLeft={stats.minutesLeft}
-            onToggle={handleToggle}
+            minutesLeft={minutesLeft}
+            onToggle={toggle}
             onStep={(direction) => (direction === -1 ? stepBack() : stepForward())}
             onSentence={stepSentence}
             onSeek={seek}
@@ -350,30 +260,16 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
           />
         </div>
 
-        {tokens.length < total && (
-          <p className="mt-6 text-center text-xs text-muted/70">
-            Loading the rest of the document… ({tokens.length.toLocaleString()} of{" "}
-            {total.toLocaleString()} words ready)
-          </p>
-        )}
-
-        {finished && (
-          <p className="mt-6 text-center text-sm text-brand">
-            You reached the end of this document.
+        {finished && !playing && (
+          <p className="mt-8 text-center text-sm text-muted">
+            That&apos;s the end of the document.{" "}
+            <Link href="/" className="rounded-sm text-ink underline decoration-1 underline-offset-4 hover:text-orp">
+              Back to the library
+            </Link>{" "}
+            or press play to start over.
           </p>
         )}
       </div>
-
-      {quizOpen && (
-        <QuizPanel
-          documentId={doc.id}
-          startIndex={quizRange.startIndex}
-          endIndex={quizRange.endIndex}
-          wpm={wpm}
-          onClose={() => setQuizOpen(false)}
-          onApplyWpm={setWpm}
-        />
-      )}
     </div>
   );
 }

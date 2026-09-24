@@ -5,15 +5,20 @@ import type { WordToken } from "./types";
 
 interface Options {
   tokens: WordToken[];
+  /** Words in the whole document, when `tokens` may still be streaming in. Defaults to `tokens.length`. */
+  totalWords?: number;
   initialIndex?: number;
   initialWpm?: number;
-  /** Called once the last word is reached. */
+  /** Called whenever a continuous run of reading ends: pause, jump, speed change, finish, or unmount. */
+  onStretchEnd?: (stretch: ReadingStretch) => void;
+  /** Called once the last word of the document is reached. */
   onFinish?: () => void;
 }
 
 export interface ReadingStretch {
   startIndex: number;
   endIndex: number;
+  wpm: number;
   seconds: number;
 }
 
@@ -25,51 +30,72 @@ const SENTENCE_END = /[.!?]["')\]]?$/;
  * Each word schedules the next: the hold time is the base delay (60s / WPM)
  * scaled by that word's multiplier, so sentence ends and long words get the
  * extra beat a reader needs without changing the overall pace.
+ *
+ * A "stretch" is words read continuously at one speed. Anything that breaks
+ * that - pausing, jumping, changing speed - closes the stretch and reports it,
+ * so logged sessions never include skipped words or mixed speeds.
  */
 export function useRsvp({
   tokens,
+  totalWords = tokens.length,
   initialIndex = 0,
   initialWpm = 300,
+  onStretchEnd,
   onFinish,
 }: Options) {
   const [index, setIndex] = useState(initialIndex);
-  const [wpm, setWpm] = useState(initialWpm);
+  const [wpm, setWpmState] = useState(initialWpm);
   const [playing, setPlaying] = useState(false);
 
-  // Where the current stretch of reading began, and whether one is underway.
-  const [stretchStart, setStretchStart] = useState(initialIndex);
-  const [started, setStarted] = useState(false);
+  // Stretch bookkeeping. Only touched from callbacks and effects, never read during render.
+  const stretch = useRef<{ start: number; wpm: number; since: number } | null>(null);
+  const indexRef = useRef(initialIndex);
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
 
-  // Wall-clock accounting, excluding paused time. Timing values are only ever
-  // touched from callbacks and effects, never read during render.
-  const runStartedAt = useRef<number | null>(null);
-  const accumulated = useRef(0);
-
+  const stretchEndRef = useRef(onStretchEnd);
   const finishRef = useRef(onFinish);
   useEffect(() => {
+    stretchEndRef.current = onStretchEnd;
     finishRef.current = onFinish;
-  }, [onFinish]);
+  }, [onStretchEnd, onFinish]);
 
-  const total = tokens.length;
-  const finished = total > 0 && index >= total - 1;
+  const loaded = tokens.length;
+  const fullyLoaded = loaded >= totalWords;
+  const finished = fullyLoaded && loaded > 0 && index >= loaded - 1;
 
-  const pause = useCallback(() => {
-    if (runStartedAt.current !== null) {
-      accumulated.current += (performance.now() - runStartedAt.current) / 1000;
-      runStartedAt.current = null;
-    }
-    setPlaying(false);
+  const openStretch = useCallback((at: number, atWpm: number) => {
+    stretch.current = { start: at, wpm: atWpm, since: performance.now() };
   }, []);
 
-  const play = useCallback(() => {
-    if (total === 0) return;
-    runStartedAt.current = performance.now();
-    if (!started) {
-      setStretchStart(index);
-      setStarted(true);
+  const closeStretch = useCallback((end: number) => {
+    const open = stretch.current;
+    stretch.current = null;
+    if (!open) return;
+
+    const seconds = (performance.now() - open.since) / 1000;
+    if (end > open.start && seconds > 0) {
+      stretchEndRef.current?.({ startIndex: open.start, endIndex: end, wpm: open.wpm, seconds });
     }
+  }, []);
+
+  // Leaving the reader mid-run still counts the words read.
+  useEffect(() => () => closeStretch(indexRef.current), [closeStretch]);
+
+  const pause = useCallback(() => {
+    closeStretch(index);
+    setPlaying(false);
+  }, [closeStretch, index]);
+
+  const play = useCallback(() => {
+    if (loaded === 0) return;
+    // Pressing play on the last word starts the document over.
+    const from = finished ? 0 : index;
+    if (from !== index) setIndex(from);
+    openStretch(from, wpm);
     setPlaying(true);
-  }, [index, started, total]);
+  }, [finished, index, loaded, openStretch, wpm]);
 
   const toggle = useCallback(() => {
     if (playing) pause();
@@ -78,10 +104,27 @@ export function useRsvp({
 
   const seek = useCallback(
     (next: number) => {
-      if (total === 0) return;
-      setIndex(Math.max(0, Math.min(next, total - 1)));
+      if (loaded === 0) return;
+      const target = Math.max(0, Math.min(next, loaded - 1));
+      if (playing) {
+        closeStretch(index);
+        openStretch(target, wpm);
+      }
+      setIndex(target);
     },
-    [total],
+    [closeStretch, index, loaded, openStretch, playing, wpm],
+  );
+
+  const setWpm = useCallback(
+    (next: number) => {
+      if (next === wpm) return;
+      if (playing) {
+        closeStretch(index);
+        openStretch(index, next);
+      }
+      setWpmState(next);
+    },
+    [closeStretch, index, openStretch, playing, wpm],
   );
 
   const stepForward = useCallback(() => seek(index + 1), [index, seek]);
@@ -90,7 +133,7 @@ export function useRsvp({
   /** Jump to the start of the previous or next sentence. */
   const stepSentence = useCallback(
     (direction: -1 | 1) => {
-      if (total === 0) return;
+      if (loaded === 0) return;
 
       if (direction === -1) {
         // Skip the boundary we are sitting on, then walk back to the one before it.
@@ -100,12 +143,12 @@ export function useRsvp({
         return seek(0);
       }
 
-      for (let i = index; i < total; i += 1) {
-        if (SENTENCE_END.test(tokens[i].t)) return seek(Math.min(i + 1, total - 1));
+      for (let i = index; i < loaded; i += 1) {
+        if (SENTENCE_END.test(tokens[i].t)) return seek(Math.min(i + 1, loaded - 1));
       }
-      return seek(total - 1);
+      return seek(loaded - 1);
     },
-    [index, seek, tokens, total],
+    [index, seek, tokens, loaded],
   );
 
   const jumpToPage = useCallback(
@@ -116,25 +159,10 @@ export function useRsvp({
     [seek, tokens],
   );
 
-  /** Hand back the stretch just read, and start a fresh one. */
-  const consumeStretch = useCallback((): ReadingStretch | null => {
-    let seconds = accumulated.current;
-    if (runStartedAt.current !== null) {
-      seconds += (performance.now() - runStartedAt.current) / 1000;
-      runStartedAt.current = performance.now();
-    }
-
-    const stretch: ReadingStretch = { startIndex: stretchStart, endIndex: index, seconds };
-
-    accumulated.current = 0;
-    setStretchStart(index);
-
-    return stretch.endIndex > stretch.startIndex ? stretch : null;
-  }, [index, stretchStart]);
-
   // The loop itself: one timer per word, rescheduled as the index advances.
+  // If reading outruns the stream, it simply waits here until more words arrive.
   useEffect(() => {
-    if (!playing || total === 0 || index >= total - 1) return;
+    if (!playing || index >= loaded - 1) return;
 
     const delay = (60_000 / wpm) * (tokens[index]?.m ?? 1);
 
@@ -142,33 +170,24 @@ export function useRsvp({
       const next = index + 1;
       setIndex(next);
 
-      // Landing on the last word ends the run; the timeout callback is the
-      // right place to do it, so no state cascade happens during render.
-      if (next >= total - 1) {
-        if (runStartedAt.current !== null) {
-          accumulated.current += (performance.now() - runStartedAt.current) / 1000;
-          runStartedAt.current = null;
-        }
+      if (fullyLoaded && next >= loaded - 1) {
+        closeStretch(next);
         setPlaying(false);
         finishRef.current?.();
       }
     }, delay);
 
     return () => window.clearTimeout(timer);
-  }, [playing, index, wpm, tokens, total]);
+  }, [closeStretch, fullyLoaded, index, loaded, playing, tokens, wpm]);
 
   const current = tokens[index];
-  const percent = total > 1 ? (index / (total - 1)) * 100 : 0;
 
-  const stats = useMemo(
+  const progress = useMemo(
     () => ({
-      wordsThisStretch: Math.max(index - stretchStart, 0),
-      stretchStartIndex: stretchStart,
-      remaining: Math.max(total - index, 0),
-      // Estimated minutes left at the current pace.
-      minutesLeft: total ? (total - index) / wpm : 0,
+      percent: totalWords > 1 ? (Math.min(index, totalWords - 1) / (totalWords - 1)) * 100 : 0,
+      minutesLeft: totalWords ? Math.max(totalWords - index, 0) / wpm : 0,
     }),
-    [index, stretchStart, total, wpm],
+    [index, totalWords, wpm],
   );
 
   return {
@@ -176,11 +195,10 @@ export function useRsvp({
     wpm,
     playing,
     finished,
-    total,
     token: current,
     page: current?.p ?? 1,
-    percent,
-    stats,
+    percent: progress.percent,
+    minutesLeft: progress.minutesLeft,
     setWpm,
     play,
     pause,
@@ -190,6 +208,5 @@ export function useRsvp({
     stepBack,
     stepSentence,
     jumpToPage,
-    consumeStretch,
   };
 }

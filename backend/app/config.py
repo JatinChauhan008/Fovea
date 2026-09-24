@@ -13,7 +13,7 @@ _MIN_SECRET_LEN = 32
 class Settings(BaseSettings):
     """Runtime configuration, overridable via environment variables or backend/.env."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=str(BASE_DIR / ".env"), extra="ignore")
 
     app_name: str = "Fovea"
     database_url: str = f"sqlite:///{BASE_DIR / 'fovea.db'}"
@@ -38,12 +38,6 @@ class Settings(BaseSettings):
     min_wpm: int = 100
     max_wpm: int = 900
 
-    # Sarvam AI (summaries + comprehension quizzes)
-    sarvam_api_key: str | None = None
-    sarvam_base_url: str = "https://api.sarvam.ai/v1"
-    sarvam_model: str = "sarvam-105b"
-    sarvam_timeout_seconds: float = 90.0
-
     @model_validator(mode="after")
     def _validate_jwt_secret(self) -> "Settings":
         is_dev = self.fovea_env.lower() == "development"
@@ -60,10 +54,6 @@ class Settings(BaseSettings):
                 f"Use at least {_MIN_SECRET_LEN} characters (PyJWT recommends 32+ for HS256)."
             )
         return self
-
-    @property
-    def ai_enabled(self) -> bool:
-        return bool(self.sarvam_api_key)
 
 
 @lru_cache

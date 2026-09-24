@@ -1,4 +1,4 @@
-﻿/**
+/**
  * RSVP timing loop tests (Issue #6).
  *
  * Fake timers let us assert the exact scheduling contract without running a
@@ -10,12 +10,14 @@
  *   3. A 12+ letter word holds 1.5x as long
  *   4. Combined punctuation + long word compounds, capped at x3
  *   5. Changing WPM mid-run uses the new speed for the next word
- *   6. consumeStretch reports elapsed wall time excluding paused intervals
+ *   6. Each run of reading is reported separately, excluding paused time
+ *   7. Jumping while paused never counts the skipped words as read
+ *   8. Reaching the end of a partly-loaded document waits instead of finishing
  */
 
 import { renderHook, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useRsvp } from "../useRsvp";
+import { type ReadingStretch, useRsvp } from "../useRsvp";
 import type { WordToken } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -145,33 +147,73 @@ describe("useRsvp scheduling", () => {
     expect(result.current.index).toBe(2);
   });
 
-  // --- 6. consumeStretch excludes paused time -----------------------------
-  it("consumeStretch reports elapsed seconds excluding paused intervals", () => {
+  // --- 6. Stretches exclude paused time -----------------------------------
+  it("reports each run of reading separately, excluding paused time", () => {
     const tokens = [tok("a"), tok("b"), tok("c"), tok("d")];
+    const stretches: ReadingStretch[] = [];
     const { result } = renderHook(() =>
-      useRsvp({ tokens, initialWpm: 300 }),
+      useRsvp({ tokens, initialWpm: 300, onStretchEnd: (s) => stretches.push(s) }),
     );
 
-    // Play for 300 ms, then pause.
+    // Play for 300 ms (one word advance at 200 ms), then pause.
     act(() => result.current.play());
     act(() => vi.advanceTimersByTime(300));
     act(() => result.current.pause());
 
-    // Idle for 1 000 ms — must not count toward active reading time.
+    // Idle for 1 000 ms - must not count toward reading time.
     act(() => vi.advanceTimersByTime(1_000));
 
     // Resume and play for another 200 ms.
     act(() => result.current.play());
     act(() => vi.advanceTimersByTime(200));
+    act(() => result.current.pause());
 
-    let stretch: ReturnType<typeof result.current.consumeStretch>;
-    act(() => {
-      stretch = result.current.consumeStretch();
-    });
+    expect(stretches).toHaveLength(2);
+    expect(stretches[0]).toMatchObject({ startIndex: 0, endIndex: 1, wpm: 300 });
+    expect(stretches[0].seconds).toBeCloseTo(0.3, 1);
+    expect(stretches[1]).toMatchObject({ startIndex: 1, endIndex: 2, wpm: 300 });
+    expect(stretches[1].seconds).toBeCloseTo(0.2, 1);
+  });
 
-    // Total active time = 500 ms = 0.5 s. Allow +/-50 ms for timer rounding.
-    expect(stretch).not.toBeNull();
-    expect(stretch!.seconds).toBeGreaterThan(0.4);
-    expect(stretch!.seconds).toBeLessThan(0.6);
+  // --- 7. Jumps are never logged as reading -------------------------------
+  it("does not count words skipped by a jump while paused", () => {
+    const tokens = Array.from({ length: 1000 }, (_, i) => tok(`w${i}`));
+    const stretches: ReadingStretch[] = [];
+    const { result } = renderHook(() =>
+      useRsvp({ tokens, initialWpm: 300, onStretchEnd: (s) => stretches.push(s) }),
+    );
+
+    act(() => result.current.play());
+    // One word per step: each word's timer is scheduled after the previous render.
+    act(() => vi.advanceTimersByTime(BASE_MS + 1));
+    act(() => vi.advanceTimersByTime(BASE_MS + 1));
+    act(() => result.current.pause());
+
+    act(() => result.current.seek(900));
+    act(() => result.current.play());
+    act(() => vi.advanceTimersByTime(BASE_MS + 1));
+    act(() => result.current.pause());
+
+    expect(stretches.map(({ startIndex, endIndex }) => [startIndex, endIndex])).toEqual([
+      [0, 2],
+      [900, 901],
+    ]);
+  });
+
+  // --- 8. A streaming document is not "finished" at the end of the buffer --
+  it("waits at the end of loaded words when more of the document is coming", () => {
+    const onFinish = vi.fn();
+    const tokens = [tok("a"), tok("b")];
+    const { result } = renderHook(() =>
+      useRsvp({ tokens, totalWords: 50, initialWpm: 300, onFinish }),
+    );
+
+    act(() => result.current.play());
+    act(() => vi.advanceTimersByTime(BASE_MS * 5));
+
+    expect(result.current.index).toBe(1);
+    expect(result.current.finished).toBe(false);
+    expect(result.current.playing).toBe(true);
+    expect(onFinish).not.toHaveBeenCalled();
   });
 });

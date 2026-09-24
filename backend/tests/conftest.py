@@ -2,12 +2,11 @@ import os
 import tempfile
 from pathlib import Path
 
-# Point the app at a throwaway database and storage directory, and force the
-# local (non-network) AI path, before any app module reads its settings.
+# Point the app at a throwaway database and storage directory before any app
+# module reads its settings.
 _TMP = Path(tempfile.mkdtemp(prefix="fovea-tests-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{_TMP / 'test.db'}"
 os.environ["STORAGE_DIR"] = str(_TMP / "storage")
-os.environ["SARVAM_API_KEY"] = ""
 os.environ["JWT_SECRET"] = "test-secret"
 os.environ["FOVEA_ENV"] = "development"
 

@@ -1,60 +1,171 @@
 @import "tailwindcss";
 
-@theme {
-  --color-ink: #0a0c0f;
-  --color-surface: #13171c;
-  --color-raised: #1a1f26;
-  --color-line: #262d36;
-  --color-text: #e9ecf1;
-  --color-muted: #929db0;
-  --color-brand: #5eead4;
-  --color-brand-dim: #2dd4bf;
-  --color-orp: #ff5f56;
-  --color-warn: #fbbf24;
-
-  --font-reader: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+/*
+ * Paper and ink. The only colour with a job is the red of the recognition
+ * point; everything else stays out of the way of the words.
+ */
+:root {
+  --paper: #f5f2eb;
+  --paper-sunk: #ece8de;
+  --ink: #1d1b18;
+  --ink-muted: #5c574e;
+  --ink-faint: #8b8579;
+  --rule: #d8d2c4;
+  --orp: #c4372c;
+  color-scheme: light;
 }
 
-html,
-body {
-  height: 100%;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #161513;
+    --paper-sunk: #1f1d1a;
+    --ink: #e8e4da;
+    --ink-muted: #a59f93;
+    --ink-faint: #736e65;
+    --rule: #3b3833;
+    --orp: #e5594d;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-sunk: var(--paper-sunk);
+  --color-ink: var(--ink);
+  --color-muted: var(--ink-muted);
+  --color-faint: var(--ink-faint);
+  --color-rule: var(--rule);
+  --color-orp: var(--orp);
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-literata), Georgia, serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "Cascadia Mono", Menlo, monospace;
 }
 
 body {
-  background: var(--color-ink);
-  color: var(--color-text);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-/* The reader keeps the ORP letter in a fixed screen position, so the eye
-   never has to travel. A monospace face makes that alignment exact. */
-.reader-word {
-  font-family: var(--font-reader);
-  font-variant-ligatures: none;
-  white-space: pre;
+::selection {
+  background: var(--ink);
+  color: var(--paper);
 }
 
-.focus-ring:focus-visible {
-  outline: 2px solid var(--color-brand);
+:focus-visible {
+  outline: 2px solid var(--orp);
   outline-offset: 2px;
 }
 
-::selection {
-  background: var(--color-brand);
-  color: var(--color-ink);
-}
+@layer components {
+  /* ---- buttons & fields ---- */
 
-/* Thin scrollbars, so lists do not fight the reading surface for attention. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-line) transparent;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    color: var(--ink);
+    background: transparent;
+    transition: background-color 0.12s, border-color 0.12s;
   }
+  .btn:hover {
+    background: var(--paper-sunk);
+    border-color: var(--ink-faint);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  .btn-solid {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .btn-solid:hover {
+    background: var(--ink-muted);
+    border-color: var(--ink-muted);
+  }
+
+  .field {
+    width: 100%;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--paper);
+    padding: 0.5rem 0.65rem;
+    color: var(--ink);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--ink);
+  }
+
+  .kbd {
+    display: inline-block;
+    min-width: 1.25rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--rule);
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    line-height: 1.1rem;
+    text-align: center;
+    color: var(--ink-muted);
+  }
+}
+
+/* ---- range inputs: hairline track, small round thumb ---- */
+
+input[type="range"].slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"].slider::-webkit-slider-runnable-track {
+  height: 2px;
+  background: linear-gradient(to right, var(--ink) var(--fill, 0%), var(--rule) var(--fill, 0%));
+}
+input[type="range"].slider::-moz-range-track {
+  height: 2px;
+  background: var(--rule);
+}
+input[type="range"].slider::-moz-range-progress {
+  height: 2px;
+  background: var(--ink);
+}
+input[type="range"].slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid var(--paper);
+}
+input[type="range"].slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid var(--paper);
+}
+
+/* ---- reader ---- */
+
+.reader-word {
+  font-family: var(--font-serif);
+  font-variant-ligatures: none;
+  white-space: pre;
 }

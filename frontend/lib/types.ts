@@ -28,8 +28,6 @@ export interface Doc {
   word_count: number;
   status: string;
   error: string | null;
-  summary: string | null;
-  summary_source: string | null;
   created_at: string;
   progress?: Progress | null;
 }
@@ -51,43 +49,9 @@ export interface Content {
   tokens: WordToken[];
 }
 
-export interface Recommendation {
-  recommended_wpm: number;
-  current_wpm: number;
-  confidence: "none" | "low" | "medium" | "high";
-  rationale: string;
-  samples: number;
-  average_comprehension: number | null;
-}
-
-export interface QuizQuestion {
-  question: string;
-  options: string[];
-  answer_index: number;
-  explanation: string | null;
-}
-
-export interface Quiz {
-  id: number;
-  document_id: number;
-  source: "ai" | "heuristic";
-  questions: QuizQuestion[];
-}
-
-export interface QuizResult {
-  quiz_id: number;
-  score: number;
-  correct: number;
-  total: number;
-  answer_key: number[];
-  explanations: (string | null)[];
-  recommendation: Recommendation;
-}
-
 export interface SpeedPoint {
   date: string;
   wpm: number;
-  comprehension: number | null;
   words: number;
 }
 
@@ -98,20 +62,6 @@ export interface Analytics {
   minutes_read: number;
   average_wpm: number;
   best_wpm: number;
-  average_comprehension: number | null;
   current_streak_days: number;
   trend: SpeedPoint[];
-}
-
-export interface Summary {
-  document_id: number;
-  summary: string;
-  source: string;
-}
-
-export interface AiStatus {
-  provider: string;
-  model: string;
-  enabled: boolean;
-  fallback: string;
 }
