@@ -92,14 +92,14 @@ Add a text-based PDF to the library, ready to read.
 6. Refuse if the reader's folder is over `MAX_STORAGE_MB` (413).
 7. Extract and tokenize in a child process (`pdf_worker`), at most two at once, killed after `PDF_TIMEOUT_SECONDS`; the worker writes the word file and reports page count, word count and the PDF's title.
 8. Create the document row (title from the PDF if it has a real one, else the tidied file name).
-9. Any refusal or failure removes both files; nothing is created. Refusals return their status with a plain message; unreadable/empty/encrypted/slow PDFs return 422; anything else is a 500 with details only in the log.
+9. Any refusal or failure removes both files; nothing is created. Refusals return their status with a plain message; unreadable/empty/encrypted/slow PDFs and extractor crashes return 422; anything else (such as the database being down) is a 500 with details only in the log.
 
 The route is a plain `def`, so FastAPI runs it on a worker thread and the event loop never blocks.
 
 ### Helpers
 - `new_document_paths`, `check_pdf_filename`, `store_upload`, `check_real_pdf`, `check_storage_room` — Tier 2 (`services/uploads.py`). Each raises `UploadRejected(status, message)`.
 - `save_upload`, `starts_like_pdf`, `storage_used_bytes`, `remove_files` — Tier 2 (`services/storage.py`), plain file work.
-- `extract_pdf(pdf, tokens, timeout)` — Tier 2 (`services/extraction.py`). Passes absolute paths (the child runs from `backend/`), reads the worker's last output line (PyMuPDF may print notices first), raises `PdfExtractionError` (reader-safe message) or `RuntimeError` (worker crash, logged).
+- `extract_pdf(pdf, tokens, timeout)` — Tier 2 (`services/extraction.py`). Passes absolute paths (the child runs from `backend/`), reads the worker's last output line (PyMuPDF may print notices first), raises `PdfExtractionError` with a reader-safe message, including when the worker crashes outright (logged with its output). A crash must not become a 500: unhandled errors leave the server without CORS headers, so the browser would report "cannot reach the API".
 - `process_pdf`, `write_tokens`, `guess_title` — Tier 2 (`services/pdf_service.py`); `tokenize_pages` (`services/tokenizer.py`) does cleaning, ORP and timing.
 - `create_document` — Tier 2 (`queries/documents.py`).
 
@@ -113,7 +113,7 @@ Signed-in readers only; files go under the reader's own folder with random names
 #### Layer 1 — DB helper tests
 `test_queries.py`: `create_document` + `list_documents` (own documents only, newest first).
 #### Layer 2 — Non-DB helper tests
-`test_reading_rules.py`: name check, `%PDF` check, size refusal leaves no file, storage refusal. `test_storage.py`: chunked copy and cap, folder size, a crashed worker is a `RuntimeError`, library notices before the answer are ignored, relative paths from another folder work.
+`test_reading.py`: tokenizer cleaning, ORP and timing. `test_reading_rules.py`: name check, `%PDF` check, size refusal leaves no file, storage refusal. `test_storage.py`: chunked copy and cap, folder size, a crashed worker is reported as an unreadable PDF, library notices before the answer are ignored, relative paths from another folder work.
 #### Layer 3 — Flow tests
 `test_flows.py`: checks run in order then extract then save; a refusal maps to its status, cleans up and skips extraction; a no-text PDF is 422 and cleans up; an unexpected error cleans up and surfaces.
 #### Layer 4 — API e2e
@@ -282,6 +282,7 @@ Run migrations: a database with tables but no Alembic history (made before migra
 - `remove_unfinished_documents(db)` — Tier 2 (`services/cleanup.py`).
 
 ### Data model
+Also at startup: JSON logging and, outside development, no `/docs` (`test_app_setup.py`).
 `migrations/versions/0001_baseline.py` (all four tables), `0002_reading_sessions_by_user_and_time.py` (composite index). Batch mode for SQLite.
 
 ### Security & scoping

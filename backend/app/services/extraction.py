@@ -6,8 +6,10 @@ Returns the page count, word count and the PDF's own title once the word file ha
 been written (the worker's answer is the last line it prints). Raises
 PdfExtractionError, with a message fit to show the reader,
 when the PDF can't be used or runs past `timeout_seconds` (the child is killed).
-Raises RuntimeError if the worker crashes for any other reason; its error output
-is logged, never shown to the reader. Only two extractions run at a time.
+A worker that crashes outright is logged with its error output and reported to
+the reader as an unreadable PDF too: an unhandled server error would reach the
+browser without CORS headers and look like the server being down. Only two
+extractions run at a time.
 """
 
 import json
@@ -20,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import BASE_DIR
-from app.services.pdf_service import PdfExtractionError
+from app.services.pdf_service import UNREADABLE_PDF, PdfExtractionError
 from app.services.pdf_worker import USER_ERROR_EXIT
 
 logger = logging.getLogger(__name__)
@@ -73,7 +75,7 @@ def extract_pdf(pdf_path: Path, tokens_path: Path, timeout_seconds: float) -> Ex
             "pdf worker crashed",
             extra={"exit_code": result.returncode, "stderr": result.stderr[-_STDERR_TAIL:]},
         )
-        raise RuntimeError("The PDF worker failed")
+        raise PdfExtractionError(UNREADABLE_PDF)
 
     return ExtractedPdf(**_last_json_line(result.stdout))
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.services import extraction
+from app.services.pdf_service import PdfExtractionError
 from app.services.storage import UploadTooLarge, save_upload, storage_used_bytes
 
 
@@ -36,13 +37,16 @@ def test_storage_used_adds_up_the_files_in_a_folder(tmp_path):
     assert storage_used_bytes(tmp_path / "missing") == 0
 
 
-def test_a_crashed_worker_is_an_internal_error_not_a_reader_message(tmp_path, monkeypatch):
+def test_a_crashed_worker_is_reported_as_an_unreadable_pdf(tmp_path, monkeypatch):
     def crashed(*_args, **_kwargs):
         return subprocess.CompletedProcess([], returncode=1, stdout="", stderr="Segfault")
 
     monkeypatch.setattr(extraction.subprocess, "run", crashed)
 
-    with pytest.raises(RuntimeError):
+    # A crash is the file's fault as far as the reader can tell, and must become a
+    # plain 422: an unhandled 500 reaches the browser without CORS headers and looks
+    # like "server down".
+    with pytest.raises(PdfExtractionError, match="couldn't be read as a PDF"):
         extraction.extract_pdf(tmp_path / "a.pdf", tmp_path / "a.json", timeout_seconds=5)
 
 

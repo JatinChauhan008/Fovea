@@ -1,4 +1,12 @@
-"""PDF text extraction via PyMuPDF."""
+"""
+PDF handling with PyMuPDF and the word files made from it.
+
+- process_pdf: a PDF's pages turned into words (via the tokenizer), or
+  PdfExtractionError with a message fit to show the reader.
+- write_tokens / read_tokens: save a document's words as JSON; read them back
+  through a small cache keyed on the file's size and modified time.
+- guess_title: the PDF's own title if it has a real one, else the file name.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +17,8 @@ from pathlib import Path
 import pymupdf
 
 from app.services.tokenizer import Token, tokenize_pages
+
+UNREADABLE_PDF = "This file couldn't be read as a PDF."
 
 
 class PdfExtractionError(RuntimeError):
@@ -28,7 +38,7 @@ def extract_pages(path: Path) -> tuple[list[str], dict]:
     except Exception as exc:
         # The library's own message means nothing to a reader; the cause stays attached
         # for the log.
-        raise PdfExtractionError("This file couldn't be read as a PDF.") from exc
+        raise PdfExtractionError(UNREADABLE_PDF) from exc
 
     return pages, meta
 
