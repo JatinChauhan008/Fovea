@@ -13,6 +13,8 @@ interface Props {
   loadedCount: number;
   page: number;
   pageCount: number;
+  /** A "go to page" waiting for that page to load. */
+  waitingForPage: number | null;
   minutesLeft: number;
   onToggle: () => void;
   onStep: (direction: -1 | 1) => void;
@@ -41,6 +43,7 @@ export function ReaderControls({
   loadedCount,
   page,
   pageCount,
+  waitingForPage,
   minutesLeft,
   onToggle,
   onStep,
@@ -82,10 +85,16 @@ export function ReaderControls({
           </span>
           <span>{timeLeft(minutesLeft)} at this speed</span>
         </div>
-        {loadedCount < total && (
-          <p className="mt-1 text-faint tabular-nums">
-            Still loading the rest of the text ({loadedCount.toLocaleString()} of {total.toLocaleString()} words).
+        {waitingForPage !== null ? (
+          <p className="mt-1 text-muted" role="status">
+            Loading page {waitingForPage}…
           </p>
+        ) : (
+          loadedCount < total && (
+            <p className="mt-1 text-faint tabular-nums">
+              Still loading the rest of the text ({loadedCount.toLocaleString()} of {total.toLocaleString()} words).
+            </p>
+          )
         )}
       </div>
 

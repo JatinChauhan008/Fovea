@@ -64,7 +64,7 @@ You can also drag the position bar, type a page number into **Go to page**, or p
 
 Your place and speed are saved every few seconds while you read, and again when you leave. The next time you open the document, it picks up at the same word. Switching to another tab pauses the reader, because browsers slow down timers in background tabs and your position would otherwise creep forward.
 
-**Stats** shows the total words you've read, your time spent reading, your average and fastest speeds, the documents you've finished, and a chart of your speed by day. A reading session is logged whenever you pause, jump somewhere else, change speed, finish or leave. Words you skip past are never counted as read.
+**Stats** shows the total words you've read, your time spent reading, your average and fastest speeds, the documents you've finished, and a chart of your speed by day. A reading session is logged whenever you pause, jump somewhere else, change speed, finish or leave. Words you skip past are never counted as read. Days follow your own clock, and the fastest speed ignores stretches shorter than 50 words, so briefly nudging the speed up doesn't count.
 
 ## How it works
 
@@ -158,7 +158,7 @@ Every route except `/health`, `/auth/register` and `/auth/login` needs an `Autho
 | `POST` | `/progress` | Save the reader's position |
 | `GET` | `/progress/{document_id}` | Get the saved position |
 | `POST` | `/sessions` | Log a stretch of reading |
-| `GET` | `/analytics/summary` | Reading totals and speed by day |
+| `GET` | `/analytics/summary?utc_offset_minutes=` | Reading totals and speed by day, with days in the reader's time zone (`330` for India) |
 
 Words are sent in a compact form to keep long documents small:
 

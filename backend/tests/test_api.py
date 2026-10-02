@@ -222,6 +222,9 @@ def test_analytics_are_empty_for_a_new_reader(client, auth):
     body = client.get("/analytics/summary", headers=auth).json()
     assert body["words_read"] == 0
     assert body["current_streak_days"] == 0
+    # Other readers' documents exist in the test database; none are counted here.
+    assert body["documents_total"] == 0
+    assert body["documents_completed"] == 0
 
 
 def test_delete_removes_the_document_and_its_text(client, auth):

@@ -1,101 +1,68 @@
-from collections import defaultdict
-from datetime import date, timedelta
+"""
+Stats page flow: GET /analytics/summary.
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+1. Add up the reader's words, time and speeds in the database.
+2. Count their documents, and the ones they've finished.
+3. Load the last year of sessions and work out the streak and daily chart in the
+   reader's own time zone.
+"""
+
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Document, Progress, ReadingSession, User
-from app.schemas import AnalyticsSummary, SpeedPoint
+from app.models import User
+from app.queries.analytics import (
+    count_documents,
+    count_finished_documents,
+    reading_totals,
+    recent_sessions,
+)
+from app.schemas import AnalyticsSummary
 from app.security import get_current_user
+from app.services.analytics import daily_trend, history_cutoff, local_day, reading_streak
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
-# A document counts as finished once the reader is this far through it.
-COMPLETION_THRESHOLD = 0.95
-
-
-def _streak(days: set[date]) -> int:
-    """Consecutive days of reading, counting back from today (or yesterday)."""
-    if not days:
-        return 0
-
-    today = date.today()
-    cursor = today if today in days else today - timedelta(days=1)
-    if cursor not in days:
-        return 0
-
-    count = 0
-    while cursor in days:
-        count += 1
-        cursor -= timedelta(days=1)
-    return count
+# Real offsets run from UTC-12 to UTC+14.
+_MAX_OFFSET_MINUTES = 14 * 60
 
 
 @router.get("/summary", response_model=AnalyticsSummary)
 def summary(
-    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+    utc_offset_minutes: int = Query(0, ge=-_MAX_OFFSET_MINUTES, le=_MAX_OFFSET_MINUTES),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> AnalyticsSummary:
-    sessions = list(
-        db.scalars(
-            select(ReadingSession)
-            .where(ReadingSession.user_id == user.id)
-            .order_by(ReadingSession.created_at.asc())
-        )
-    )
+    now = datetime.now(UTC)
 
-    documents_total = (
-        db.scalar(select(func.count(Document.id)).where(Document.user_id == user.id)) or 0
-    )
+    # Totals across everything they've read, added up by the database.
+    totals = reading_totals(db, user.id)
 
-    completed = 0
-    progress_rows = db.scalars(select(Progress).where(Progress.user_id == user.id))
-    for row in progress_rows:
-        document = db.get(Document, row.document_id)
-        if (
-            document
-            and document.word_count
-            and row.word_index / document.word_count >= COMPLETION_THRESHOLD
-        ):
-            completed += 1
+    # How many documents they have, and how many they've read to the end.
+    documents_total = count_documents(db, user.id)
+    documents_completed = count_finished_documents(db, user.id)
 
-    words_read = sum(s.words_read for s in sessions)
-    seconds = sum(s.duration_seconds for s in sessions)
+    # Only the last year of sessions is needed for the streak and the chart.
+    sessions = recent_sessions(db, user.id, since=history_cutoff(now))
 
-    # Weight speed by words actually read, so a 30-second burst does not
-    # outweigh a twenty-minute session.
-    average_wpm = sum(s.wpm * s.words_read for s in sessions) / words_read if words_read else 0.0
+    # Which of the reader's own days had reading in them, and today's date for them.
+    days_read = {local_day(row.created_at, utc_offset_minutes) for row in sessions}
+    today = local_day(now, utc_offset_minutes)
 
-    # Daily trend, one point per day the reader was active.
-    per_day: dict[date, list[ReadingSession]] = defaultdict(list)
-    for session in sessions:
-        per_day[session.created_at.date()].append(session)
-
-    trend: list[SpeedPoint] = []
-    for day in sorted(per_day)[-30:]:
-        rows = per_day[day]
-        day_words = sum(r.words_read for r in rows)
-        day_wpm = (
-            sum(r.wpm * r.words_read for r in rows) / day_words
-            if day_words
-            else sum(r.wpm for r in rows) / len(rows)
-        )
-        trend.append(
-            SpeedPoint(
-                date=day.isoformat(),
-                wpm=round(day_wpm, 1),
-                words=day_words,
-            )
-        )
+    # Consecutive days read up to today, and one speed point per recent day.
+    streak = reading_streak(days_read, today)
+    trend = daily_trend(sessions, utc_offset_minutes)
 
     return AnalyticsSummary(
         documents_total=documents_total,
-        documents_completed=completed,
-        words_read=words_read,
-        minutes_read=round(seconds / 60, 1),
-        average_wpm=round(average_wpm, 1),
-        best_wpm=float(max((s.wpm for s in sessions), default=0)),
-        current_streak_days=_streak({s.created_at.date() for s in sessions}),
+        documents_completed=documents_completed,
+        words_read=totals.words_read,
+        minutes_read=round(totals.seconds / 60, 1),
+        average_wpm=round(totals.average_wpm, 1),
+        best_wpm=float(totals.best_wpm),
+        current_streak_days=streak,
         trend=trend,
     )

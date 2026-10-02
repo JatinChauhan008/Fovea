@@ -129,6 +129,7 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
     stepForward,
     stepSentence,
     jumpToPage,
+    waitingForPage,
   } = useRsvp({
     tokens,
     totalWords: total,
@@ -225,6 +226,7 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
             loadedCount={tokens.length}
             page={page}
             pageCount={doc.page_count}
+            waitingForPage={waitingForPage}
             minutesLeft={minutesLeft}
             onToggle={toggle}
             onStep={(direction) => (direction === -1 ? stepBack() : stepForward())}

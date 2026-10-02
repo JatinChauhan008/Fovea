@@ -61,3 +61,16 @@ describe("api client", () => {
     }
   });
 });
+
+describe("api.analytics", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends the reader's UTC offset so days follow their own clock", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.analytics(330);
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/analytics/summary?utc_offset_minutes=330");
+  });
+});

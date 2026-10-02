@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 
 import pymupdf
@@ -49,7 +50,29 @@ def write_tokens(tokens: list[Token], destination: Path) -> None:
     destination.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
+# A parsed word costs ~280 bytes, so a 500k-word textbook is ~140 MB; two is plenty
+# for one reader streaming a book while another document is opened.
+_CACHED_DOCUMENTS = 2
+
+
 def read_tokens(path: Path) -> list[dict]:
+    """
+    A document's words, parsed from its word file. The reader streams a book in many
+    chunks, so the parsed list is cached (keyed on the file's path, size and modified
+    time, so a changed file is read again). Callers must not modify the returned list.
+    Raises FileNotFoundError if the file is gone.
+    """
+    stat = Path(path).stat()
+    return _parse_tokens(str(path), stat.st_mtime_ns, stat.st_size)
+
+
+def clear_token_cache() -> None:
+    """Forget every parsed word file (used by tests)."""
+    _parse_tokens.cache_clear()
+
+
+@lru_cache(maxsize=_CACHED_DOCUMENTS)
+def _parse_tokens(path: str, _mtime_ns: int, _size: int) -> list[dict]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 

@@ -151,5 +151,7 @@ export const api = {
     }),
 
   // --- analytics ---
-  analytics: () => request<Analytics>("/analytics/summary"),
+  /** `utcOffsetMinutes` is the reader's offset from UTC (330 for India), so days are their days. */
+  analytics: (utcOffsetMinutes: number) =>
+    request<Analytics>(`/analytics/summary?utc_offset_minutes=${utcOffsetMinutes}`),
 };

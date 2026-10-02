@@ -35,7 +35,11 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     if (!user) return;
-    api.analytics().then(setData).catch((err) => setError(err.message));
+    // getTimezoneOffset counts minutes *behind* UTC, so flip its sign.
+    api
+      .analytics(-new Date().getTimezoneOffset())
+      .then(setData)
+      .catch((err) => setError(err.message));
   }, [user]);
 
   if (loading || !user) return null;
