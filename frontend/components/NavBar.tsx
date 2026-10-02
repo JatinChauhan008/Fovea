@@ -12,7 +12,7 @@ const LINKS = [
 /** The name set the way the reader shows a word: recognition point in red. */
 export function Wordmark() {
   return (
-    <span className="font-serif text-xl font-semibold tracking-tight">
+    <span className="font-serif text-xl font-semibold">
       F<span className="text-orp">o</span>vea
     </span>
   );
@@ -32,7 +32,7 @@ export function NavBar() {
       </Link>
 
       {user && (
-        <nav className="flex items-baseline gap-5 text-sm">
+        <nav aria-label="Main" className="flex items-baseline gap-5 text-sm">
           {LINKS.map((link) => {
             const active = pathname === link.href;
             return (
@@ -54,7 +54,7 @@ export function NavBar() {
       {user && (
         <div className="ml-auto flex items-baseline gap-4 text-sm">
           <span className="hidden max-w-56 truncate text-faint sm:inline">{user.email}</span>
-          <button type="button" onClick={logout} className="rounded-sm text-muted hover:text-ink">
+          <button type="button" onClick={logout} className="tap rounded-sm text-muted hover:text-ink">
             Sign out
           </button>
         </div>

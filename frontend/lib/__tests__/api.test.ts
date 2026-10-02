@@ -74,3 +74,71 @@ describe("api.analytics", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/analytics/summary?utc_offset_minutes=330");
   });
 });
+
+describe("api.upload", () => {
+  class FakeXhr {
+    static last: FakeXhr;
+    upload = { onprogress: null as ((e: ProgressEvent) => void) | null };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    status = 0;
+    responseText = "";
+    headers: Record<string, string> = {};
+    constructor() {
+      FakeXhr.last = this;
+    }
+    open() {}
+    setRequestHeader(name: string, value: string) {
+      this.headers[name] = value;
+    }
+    send() {}
+    respond(status: number, body: unknown) {
+      this.status = status;
+      this.responseText = JSON.stringify(body);
+      this.onload?.();
+    }
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("XMLHttpRequest", FakeXhr);
+    setToken("saved-token");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setToken(null);
+  });
+
+  it("reports how much has been sent and returns the new document", async () => {
+    const progress = vi.fn();
+    const done = api.upload(new File(["%PDF"], "a.pdf"), progress);
+
+    FakeXhr.last.upload.onprogress?.({ lengthComputable: true, loaded: 5, total: 10 } as ProgressEvent);
+    FakeXhr.last.respond(201, { id: 7, title: "A" });
+
+    await expect(done).resolves.toMatchObject({ id: 7 });
+    expect(progress).toHaveBeenCalledWith(0.5);
+    expect(FakeXhr.last.headers.Authorization).toBe("Bearer saved-token");
+  });
+
+  it("passes on the server's reason for refusing", async () => {
+    const done = api.upload(new File(["x"], "a.pdf"));
+    FakeXhr.last.respond(413, { detail: "That file is too big. The limit is 40 MB." });
+
+    await expect(done).rejects.toMatchObject({ status: 413, message: "That file is too big. The limit is 40 MB." });
+  });
+
+  it("signs out when the server rejects the sign-in", async () => {
+    const done = api.upload(new File(["x"], "a.pdf"));
+    FakeXhr.last.respond(401, { detail: "Could not validate credentials" });
+
+    await expect(done).rejects.toMatchObject({ status: 401 });
+    expect(getToken()).toBeNull();
+  });
+
+  it("says when the server can't be reached", async () => {
+    const done = api.upload(new File(["x"], "a.pdf"));
+    FakeXhr.last.onerror?.();
+
+    await expect(done).rejects.toMatchObject({ status: 0 });
+  });
+});

@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { ErrorText, PageHeading, PageLoading } from "@/components/PageParts";
 import { TrendChart } from "@/components/TrendChart";
 import { api } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
@@ -43,18 +44,16 @@ export default function AnalyticsPage() {
       .catch((err) => setError(err.message));
   }, [userId]);
 
-  if (loading || !user) return null;
+  if (loading || !user) return <PageLoading />;
 
   return (
-    <div className="pt-8">
-      <h1 className="font-serif text-3xl font-semibold tracking-tight">Stats</h1>
+    <div className="pb-20 pt-8">
+      <PageHeading>Stats</PageHeading>
 
       {error ? (
-        <p role="alert" className="mt-4 text-sm text-orp">
-          {error}
-        </p>
+        <ErrorText className="mt-4">{error}</ErrorText>
       ) : !data ? (
-        <p className="mt-4 text-sm text-faint">Loading…</p>
+        <PageLoading inline className="mt-4" />
       ) : data.words_read === 0 ? (
         <p className="mt-3 max-w-prose text-muted">
           Nothing recorded yet. Each time you pause or finish in the reader, that stretch is logged
@@ -68,7 +67,8 @@ export default function AnalyticsPage() {
             <Stat
               label="Average speed"
               value={`${Math.round(data.average_wpm)}`}
-              note={`wpm, fastest ${Math.round(data.best_wpm)}`}
+              // Fastest only counts stretches of 50+ words, so it can be missing.
+              note={data.best_wpm > 0 ? `wpm, fastest ${Math.round(data.best_wpm)}` : "wpm"}
             />
             <Stat
               label="Finished"

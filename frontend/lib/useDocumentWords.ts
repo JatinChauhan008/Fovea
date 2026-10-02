@@ -21,11 +21,14 @@ export interface LoadedDocument {
  * resuming deep in a book lands on the right word; the rest then streams in
  * behind the reader, CONTENT_CHUNK words at a time. Reading starts at the saved
  * speed, else the reader's preferred speed. Nothing loads until `user` is known.
- * `error` holds a message to show if the link or the document is bad.
+ * `error` holds a message to show if the link or the document is bad (nothing to
+ * read). If a later chunk fails once reading has started, the reader stays open
+ * with what has loaded and `streamError` says the rest didn't arrive.
  */
 export function useDocumentWords(documentId: number, user: User | null) {
   const [loaded, setLoaded] = useState<LoadedDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   // Loading depends on who is signed in, not on later changes to their account
   // (such as the remembered speed), so the speed is read through a ref.
@@ -42,6 +45,7 @@ export function useDocumentWords(documentId: number, user: User | null) {
       return;
     }
     let cancelled = false;
+    let readingStarted = false;
 
     (async () => {
       try {
@@ -66,6 +70,7 @@ export function useDocumentWords(documentId: number, user: User | null) {
           startIndex: Math.min(resumeAt, Math.max(tokens.length - 1, 0)),
           startWpm: doc.progress?.wpm ?? preferredWpm.current ?? DEFAULT_WPM,
         });
+        readingStarted = true;
 
         while (tokens.length < total && !cancelled) {
           const next = await api.content(documentId, tokens.length, CONTENT_CHUNK);
@@ -76,7 +81,9 @@ export function useDocumentWords(documentId: number, user: User | null) {
           );
         }
       } catch (err) {
-        if (!cancelled) setError((err as Error).message);
+        if (cancelled) return;
+        if (readingStarted) setStreamError((err as Error).message);
+        else setError((err as Error).message);
       }
     })();
 
@@ -85,5 +92,5 @@ export function useDocumentWords(documentId: number, user: User | null) {
     };
   }, [documentId, userId]);
 
-  return { loaded, error };
+  return { loaded, error, streamError };
 }

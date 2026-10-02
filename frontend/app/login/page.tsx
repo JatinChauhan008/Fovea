@@ -8,10 +8,11 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ErrorText, PageHeading, PageLoading, TEXT_LINK_CLASS } from "@/components/PageParts";
 import { useAuth } from "@/lib/auth";
 
 export default function LoginPage() {
-  const { user, login, register } = useAuth();
+  const { user, loading, login, register } = useAuth();
   const router = useRouter();
 
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -41,11 +42,12 @@ export default function LoginPage() {
 
   const signingIn = mode === "login";
 
+  // While a saved sign-in is checked, or on the way to the library, show nothing to fill in.
+  if (loading || user) return <PageLoading />;
+
   return (
-    <div className="mx-auto max-w-sm pt-16">
-      <h1 className="font-serif text-3xl font-semibold tracking-tight">
-        {signingIn ? "Sign in" : "Create an account"}
-      </h1>
+    <div className="mx-auto max-w-sm pb-20 pt-16">
+      <PageHeading>{signingIn ? "Sign in" : "Create an account"}</PageHeading>
       <p className="mt-2 text-muted">
         Fovea shows a PDF one word at a time, holding each word still so your eyes don&apos;t have to
         move.
@@ -80,11 +82,7 @@ export default function LoginPage() {
           />
         </label>
 
-        {error && (
-          <p role="alert" className="text-sm text-orp">
-            {error}
-          </p>
-        )}
+        {error && <ErrorText>{error}</ErrorText>}
 
         <button type="submit" disabled={busy} className="btn btn-solid w-full py-2">
           {busy ? "One moment…" : signingIn ? "Sign in" : "Create account"}
@@ -99,7 +97,7 @@ export default function LoginPage() {
             setMode(signingIn ? "register" : "login");
             setError(null);
           }}
-          className="rounded-sm text-ink underline decoration-1 underline-offset-4 hover:text-orp"
+          className={`tap ${TEXT_LINK_CLASS}`}
         >
           {signingIn ? "Create an account" : "Sign in"}
         </button>

@@ -50,7 +50,7 @@ Open http://localhost:3000, create an account and add a PDF. Text-based PDFs up 
 
 ## Using the reader
 
-Press **Space** to start. When you pause, the words around your position appear in grey underneath, so you can find your place again.
+Press **Space** (or tap the word) to start. When you pause, the words around your position appear in grey underneath, so you can find your place again.
 
 | Key | Action |
 |---|---|
@@ -135,10 +135,10 @@ The frontend has a single setting: `NEXT_PUBLIC_API_URL`, the address of the bac
 
 ```bash
 cd backend && uv run pytest        # tokenizer, cleaning, auth, upload, progress, analytics
-cd frontend && npm test            # the reading loop in lib/useRsvp.ts (Vitest)
+cd frontend && npm test            # hooks, API client and components (Vitest)
 ```
 
-The backend tests use a throwaway database and storage folder, so they never touch your data. The frontend tests use fake timers to check that each word is held for exactly the right time, and that jumps and pauses are logged correctly.
+The backend tests use a throwaway database and storage folder, so they never touch your data. The frontend tests use fake timers to check that each word is held for exactly the right time and that jumps and pauses are logged correctly, and cover saving, loading, keyboard shortcuts, uploads and the library rows.
 
 ## API
 
@@ -183,6 +183,7 @@ backend/
     routers/             auth, documents, progress, analytics (see routers/architecture.md)
     queries/             database reads and writes, one module per area
     services/
+      cleanup.py         removes half-made documents left by older versions
       extraction.py      runs pdf_worker.py in a child process with a timeout
       pdf_service.py     text extraction with PyMuPDF, word-file cache
       tokenizer.py       cleaning, ORP and timing
@@ -193,12 +194,15 @@ backend/
   tests/
 frontend/
   app/                   pages: library, login, read/[id], analytics (see app/architecture.md)
-  components/            word display, reader controls, upload box, chart, nav bar
+  components/            word display, reader controls, upload box, library row, chart, nav bar,
+                         PageParts (shared heading, error, link and loading pieces)
   lib/
     useRsvp.ts           the reading loop: timing, seeking, logging reading sessions
     useReader.ts         the loop joined to useProgressSaver (keeps the place saved)
     useDocumentWords.ts  loads a document and streams its words in
     useReaderKeys.ts     keyboard shortcuts and pausing when the tab is hidden
+    useProgressSaver.ts  keeps the place saved and logs each stretch of reading
+    format.ts, wordSize.ts  reading-time text; shrinking long words to fit
     api.ts, auth.tsx     API client and sign-in state
     constants.ts         speed limits and defaults (mirrors the backend settings)
 ```

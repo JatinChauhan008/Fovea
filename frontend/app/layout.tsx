@@ -26,10 +26,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${sans.variable} ${serif.variable} ${mono.variable}`}>
-      <body className="min-h-screen">
+      <body className="min-h-dvh">
         <AuthProvider>
           <NavBar />
-          <main className="mx-auto w-full max-w-4xl px-5 pb-20 sm:px-8">{children}</main>
+          {/* Pages add their own bottom space, so the reader can fill exactly one screen. */}
+          <main className="mx-auto w-full max-w-4xl px-5 sm:px-8">{children}</main>
         </AuthProvider>
       </body>
     </html>

@@ -33,11 +33,49 @@ export function setToken(token: string | null) {
 /** Fired when the API rejects a stored token, so the app can sign out. */
 export const SESSION_EXPIRED_EVENT = "fovea:session-expired";
 
+const UNREACHABLE = "Cannot reach the Fovea API. Is the backend running on port 8000?";
+
+/**
+ * Turns a finished response into its data, or throws an ApiError carrying the
+ * server's reason. A 401 anywhere but the login form means the saved sign-in was
+ * rejected, so it is cleared and the app is told to sign out.
+ */
+function readResponse<T>(status: number, raw: string, path: string, token: string | null): T {
+  const ok = status >= 200 && status < 300;
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    // Proxies and crashed workers answer with plain text or HTML.
+    if (ok) throw new ApiError("The server sent a response Fovea could not read.", status);
+  }
+
+  if (status === 401 && token && !path.startsWith("/auth/login")) {
+    setToken(null);
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  }
+
+  if (!ok) {
+    const detail = data?.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : Array.isArray(detail)
+          ? (detail[0]?.msg ?? "Request failed")
+          : `Request failed (${status})`;
+    throw new ApiError(message, status);
+  }
+
+  return data as T;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers = new Headers(init.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (init.body && !(init.body instanceof FormData)) {
+  // JSON bodies are sent as strings. Forms (sign-in) and uploads set or imply their
+  // own type, which must not be overwritten: sign-in sent as JSON arrives empty.
+  if (typeof init.body === "string" && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -45,44 +83,40 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     response = await fetch(`${BASE_URL}${path}`, { ...init, headers });
   } catch {
-    throw new ApiError(
-      "Cannot reach the Fovea API. Is the backend running on port 8000?",
-      0,
-    );
+    throw new ApiError(UNREACHABLE, 0);
   }
 
   if (response.status === 204) return undefined as T;
+  return readResponse<T>(response.status, await response.text(), path, token);
+}
 
-  const raw = await response.text();
-  let data = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    // Proxies and crashed workers answer with plain text or HTML.
-    if (response.ok) {
-      throw new ApiError("The server sent a response Fovea could not read.", response.status);
-    }
-  }
+/**
+ * Uploads a PDF, reporting the share sent so far (0 to 1) as it goes. Uses
+ * XMLHttpRequest because fetch can't report upload progress; responses are read
+ * the same way as every other request.
+ */
+function uploadWithProgress(file: File, onProgress?: (sent: number) => void): Promise<Doc> {
+  return new Promise((resolve, reject) => {
+    const token = getToken();
+    const body = new FormData();
+    body.append("file", file);
 
-  // A 401 from the login form just means a wrong password; anywhere else, a
-  // stored token was rejected and the session is over.
-  if (response.status === 401 && token && !path.startsWith("/auth/login")) {
-    setToken(null);
-    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
-  }
-
-  if (!response.ok) {
-    const detail = data?.detail;
-    const message =
-      typeof detail === "string"
-        ? detail
-        : Array.isArray(detail)
-          ? (detail[0]?.msg ?? "Request failed")
-          : `Request failed (${response.status})`;
-    throw new ApiError(message, response.status);
-  }
-
-  return data as T;
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE_URL}/upload`);
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress?.(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      try {
+        resolve(readResponse<Doc>(xhr.status, xhr.responseText, "/upload", token));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    xhr.onerror = () => reject(new ApiError(UNREACHABLE, 0));
+    xhr.send(body);
+  });
 }
 
 export const api = {
@@ -106,11 +140,7 @@ export const api = {
   me: () => request<AuthResponse["user"]>("/auth/me"),
 
   // --- documents ---
-  upload: (file: File) => {
-    const body = new FormData();
-    body.append("file", file);
-    return request<Doc>("/upload", { method: "POST", body });
-  },
+  upload: uploadWithProgress,
 
   documents: () => request<Doc[]>("/documents"),
   document: (id: number) => request<Doc>(`/documents/${id}`),

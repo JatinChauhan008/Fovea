@@ -17,14 +17,14 @@ Fovea is a single-tenant-per-account RSVP speed reader for PDFs. A user uploads 
   - Frontend: `frontend/lib/` — `api.ts` (API client + token storage), `auth.tsx` (auth context, `useRequireAuth`, `useRememberSpeed`), `types.ts`, `constants.ts` (speed limits, mirrors backend settings), `format.ts` (`formatDuration`).
 - Tier 2 (feature-scoped helpers):
   - Backend: `app/queries/` (all database reads/writes: `documents`, `progress`, `sessions`, `users`, `analytics`) and `app/services/` (`uploads` checks, `storage` file work, `extraction` + `pdf_worker` child process, `pdf_service`, `tokenizer`, `reading` rules, `analytics` maths, `cleanup`).
-  - Frontend: `lib/useRsvp.ts` (reading loop), `lib/useProgressSaver.ts`, `lib/useReader.ts` (loop + saver), `lib/useDocumentWords.ts`, `lib/useReaderKeys.ts`, and `components/` (`RsvpDisplay`, `ReaderControls`, `UploadDropzone`, `TrendChart`, `NavBar`, `ServerUnreachable`).
+  - Frontend: `lib/useRsvp.ts` (reading loop), `lib/useProgressSaver.ts`, `lib/useReader.ts` (loop + saver), `lib/useDocumentWords.ts`, `lib/useReaderKeys.ts`, `lib/wordSize.ts`, and `components/` (`PageParts` — shared heading/error/link/loading pieces, use these instead of restyling — `DocumentRow`, `RsvpDisplay`, `ReaderControls`, `UploadDropzone`, `TrendChart`, `NavBar`, `ServerUnreachable`).
 - Flow files:
   - Backend: `app/routers/` — `auth.py`, `documents.py`, `progress.py`, `analytics.py`; wired up in `app/main.py`. Each route reads as numbered steps with a one-line comment above every helper call; no queries or rules inline.
   - Frontend: `frontend/app/**/page.tsx` — library (`page.tsx`), `login/`, `read/[id]/`, `analytics/`.
 - Models / migrations: `backend/app/models.py` / `backend/migrations/versions/` (Alembic). Startup runs `migrate_database()`; a database from before migrations is stamped at `0001` (the old `create_all` schema) first.
 - Tests:
-  - Backend: `backend/tests/test_*.py` (pytest; fixtures `client`, `auth`, `intruder` (a second reader), `document` in `conftest.py` use a throwaway DB and storage dir). Layer 1 `test_queries.py`, `test_analytics.py`, `test_migrations.py`; layer 2 `test_reading_rules.py`, `test_storage.py`, `test_reading.py` (tokenizer), `test_word_cache.py`; layer 3 `test_flows.py` (helpers mocked on the router module); layer 4 `test_api.py`, `test_upload_limits.py`, `test_rate_limit.py`.
-  - Frontend: `frontend/lib/__tests__/*.test.ts(x)` (Vitest, happy-dom, fake timers; `api` mocked with `vi.mock`).
+  - Backend: `backend/tests/test_*.py` (pytest; fixtures `client`, `auth`, `intruder` (a second reader), `document` in `conftest.py` use a throwaway DB and storage dir). Layer 1 `test_queries.py`, `test_analytics.py`, `test_migrations.py`, `test_cleanup.py`; layer 2 `test_reading_rules.py`, `test_storage.py`, `test_reading.py` (tokenizer), `test_word_cache.py`; layer 3 `test_flows.py` (helpers mocked on the router module); layer 4 `test_api.py`, `test_upload_limits.py`, `test_rate_limit.py`, `test_app_setup.py`.
+  - Frontend: `frontend/lib/__tests__/*.test.ts(x)` and `frontend/components/__tests__/*.test.tsx` (Vitest, happy-dom, Testing Library, fake timers; `api` mocked with `vi.mock`).
 - Architecture docs: `backend/app/routers/architecture.md` (the API, primary doc) and `frontend/app/architecture.md` (pages and hooks).
 
 ## Commands

@@ -9,7 +9,8 @@
   --paper-sunk: #ece8de;
   --ink: #1d1b18;
   --ink-muted: #5c574e;
-  --ink-faint: #8b8579;
+  /* 4.7:1 on paper: quiet, but readable at small sizes (WCAG AA). */
+  --ink-faint: #716b60;
   --rule: #d8d2c4;
   --orp: #c4372c;
   color-scheme: light;
@@ -21,7 +22,7 @@
     --paper-sunk: #1f1d1a;
     --ink: #e8e4da;
     --ink-muted: #a59f93;
-    --ink-faint: #736e65;
+    --ink-faint: #8a8478;
     --rule: #3b3833;
     --orp: #e5594d;
     color-scheme: dark;
@@ -108,6 +109,13 @@ body {
     border-color: var(--ink);
   }
 
+  /* A text button that is still a comfortable touch target. */
+  .tap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .kbd {
     display: inline-block;
     min-width: 1.25rem;
@@ -162,10 +170,32 @@ input[type="range"].slider::-moz-range-thumb {
   border: 2px solid var(--paper);
 }
 
+/* ---- touch: every control is at least a 44px target ---- */
+
+@media (pointer: coarse) {
+  .btn,
+  .tap {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
+}
+
 /* ---- reader ---- */
 
 .reader-word {
+  /* The normal word size, and the room either side of the red letter (half the
+     reading column inside the page gutters). Long words shrink to fit: see
+     lib/wordSize.ts. */
+  --word-size: 3rem;
+  --word-half-width: calc((100vw - 2.5rem) / 2);
   font-family: var(--font-serif);
   font-variant-ligatures: none;
   white-space: pre;
+}
+
+@media (min-width: 640px) {
+  .reader-word {
+    --word-size: 3.75rem;
+    --word-half-width: calc(min(100vw - 4rem, 48rem) / 2);
+  }
 }

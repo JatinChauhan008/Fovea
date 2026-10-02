@@ -117,17 +117,31 @@ export function ReaderControls({
         </button>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 border-t border-rule pt-5">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span className="text-muted">Speed</span>
-          <div className="flex gap-3 tabular-nums">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-rule pt-5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <label className="flex items-center gap-3">
+            <span className="text-muted">Speed</span>
+            <input
+              type="range"
+              min={minWpm}
+              max={maxWpm}
+              step={WPM_STEP}
+              value={wpm}
+              onChange={(event) => onWpm(Number(event.target.value))}
+              aria-label="Words per minute"
+              className="slider w-28 sm:w-32"
+              style={{ ["--fill" as string]: `${wpmFill}%` }}
+            />
+            <span className="w-16 tabular-nums">{wpm} wpm</span>
+          </label>
+          <div role="group" aria-label="Speed presets" className="flex gap-1 tabular-nums">
             {WPM_PRESETS.map((preset) => (
               <button
                 key={preset}
                 type="button"
                 onClick={() => onWpm(preset)}
                 aria-pressed={wpm === preset}
-                className={`rounded-sm ${
+                className={`tap rounded-sm px-1 ${
                   wpm === preset
                     ? "text-ink underline decoration-1 underline-offset-4"
                     : "text-faint hover:text-ink"
@@ -137,26 +151,10 @@ export function ReaderControls({
               </button>
             ))}
           </div>
-          <label className="flex items-center gap-3">
-            <input
-              type="range"
-              min={minWpm}
-              max={maxWpm}
-              step={WPM_STEP}
-              value={wpm}
-              onChange={(event) => onWpm(Number(event.target.value))}
-              aria-label="Words per minute"
-              className="slider w-32"
-              style={{ ["--fill" as string]: `${wpmFill}%` }}
-            />
-            <span className="w-16 tabular-nums">{wpm} wpm</span>
-          </label>
         </div>
 
-        <form onSubmit={submitPage} className="flex items-center gap-2">
-          <label htmlFor="jump-page" className="whitespace-nowrap text-muted">
-            Go to page
-          </label>
+        <form onSubmit={submitPage} className="flex items-center gap-2 text-muted">
+          <label htmlFor="jump-page">Page</label>
           <input
             id="jump-page"
             type="number"
@@ -168,15 +166,21 @@ export function ReaderControls({
             onChange={(event) => setPageDraft(event.target.value)}
             className="field w-16 px-2 py-1 text-center tabular-nums"
           />
+          <span className="tabular-nums">of {pageCount}</span>
         </form>
       </div>
 
-      <p className="hidden flex-wrap justify-center gap-x-5 gap-y-1 text-xs text-faint sm:flex">
-        <span><span className="kbd">Space</span> play or pause</span>
-        <span><span className="kbd">←</span> <span className="kbd">→</span> word</span>
-        <span><span className="kbd">Shift</span> + arrows sentence</span>
-        <span><span className="kbd">↑</span> <span className="kbd">↓</span> speed</span>
-      </p>
+      {/* Only for keyboard-and-mouse readers; touch readers tap the word instead. */}
+      <details className="hidden text-center text-xs text-faint pointer-fine:block">
+        <summary className="cursor-pointer rounded-sm">Keyboard shortcuts</summary>
+        <p className="mt-2 flex flex-wrap justify-center gap-x-5 gap-y-1">
+          <span><span className="kbd">Space</span> play or pause</span>
+          <span><span className="kbd">←</span> <span className="kbd">→</span> word</span>
+          <span><span className="kbd">Shift</span> + arrows sentence</span>
+          <span><span className="kbd">↑</span> <span className="kbd">↓</span> speed</span>
+          <span><span className="kbd">Esc</span> pause</span>
+        </p>
+      </details>
     </div>
   );
 }

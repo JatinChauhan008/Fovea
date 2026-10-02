@@ -12,6 +12,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { ErrorText, PageLoading, TextLink } from "@/components/PageParts";
 import { ReaderControls } from "@/components/ReaderControls";
 import { RsvpDisplay } from "@/components/RsvpDisplay";
 import { useRememberSpeed, useRequireAuth } from "@/lib/auth";
@@ -25,30 +26,27 @@ export default function ReaderPage() {
   const { user, loading } = useRequireAuth();
 
   // Fetch the document and its words, once the sign-in is known.
-  const { loaded, error } = useDocumentWords(Number(params.id), user);
+  const { loaded, error, streamError } = useDocumentWords(Number(params.id), user);
 
   if (error) {
     return (
       <div className="pt-24 text-center">
-        <p className="text-orp">{error}</p>
-        <Link
-          href="/"
-          className="mt-4 inline-block rounded-sm text-muted underline decoration-1 underline-offset-4 hover:text-ink"
-        >
-          Back to the library
-        </Link>
+        <ErrorText size="normal">{error}</ErrorText>
+        <p className="mt-4">
+          <TextLink href="/">Back to the library</TextLink>
+        </p>
       </div>
     );
   }
 
   if (loading || !user || !loaded) {
-    return <p className="pt-24 text-center text-sm text-faint">Opening document…</p>;
+    return <PageLoading label="Opening document…" />;
   }
 
-  return <Reader key={loaded.doc.id} {...loaded} />;
+  return <Reader key={loaded.doc.id} {...loaded} streamError={streamError} />;
 }
 
-function Reader(loaded: LoadedDocument) {
+function Reader({ streamError, ...loaded }: LoadedDocument & { streamError: string | null }) {
   const { doc, tokens, total } = loaded;
 
   // The reading loop, with the reader's place kept saved as they go.
@@ -64,9 +62,10 @@ function Reader(loaded: LoadedDocument) {
   useRememberSpeed(reader.wpm);
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-3xl flex-col">
+    // Exactly one screen tall (dynamic height, so phone browser bars don't add a scroll).
+    <div className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col">
       <header className="flex items-baseline gap-4 pt-6">
-        <Link href="/" className="shrink-0 rounded-sm text-sm text-muted hover:text-ink">
+        <Link href="/" className="tap shrink-0 rounded-sm text-sm text-muted hover:text-ink">
           ← Library
         </Link>
         <h1 className="min-w-0 flex-1 truncate text-center font-serif text-muted" title={doc.title}>
@@ -76,7 +75,12 @@ function Reader(loaded: LoadedDocument) {
       </header>
 
       <div className="flex flex-1 flex-col justify-center py-10">
-        <RsvpDisplay tokens={tokens} index={reader.index} playing={reader.playing} />
+        <RsvpDisplay
+          tokens={tokens}
+          index={reader.index}
+          playing={reader.playing}
+          onToggle={reader.toggle}
+        />
 
         <div className="mt-12">
           <ReaderControls
@@ -100,6 +104,12 @@ function Reader(loaded: LoadedDocument) {
           />
         </div>
 
+        {streamError && (
+          <ErrorText className="mt-8 text-center">
+            The rest of this document didn&apos;t load ({streamError}). Reload the page to try again.
+          </ErrorText>
+        )}
+
         {reader.saveFailed && (
           <p role="status" className="mt-8 text-center text-sm text-orp">
             Your place isn&apos;t being saved right now. Fovea will keep trying.
@@ -108,10 +118,7 @@ function Reader(loaded: LoadedDocument) {
 
         {reader.finished && !reader.playing && (
           <p className="mt-8 text-center text-sm text-muted">
-            That&apos;s the end of the document.{" "}
-            <Link href="/" className="rounded-sm text-ink underline decoration-1 underline-offset-4 hover:text-orp">
-              Back to the library
-            </Link>{" "}
+            That&apos;s the end of the document. <TextLink href="/">Back to the library</TextLink>{" "}
             or press play to start over.
           </p>
         )}

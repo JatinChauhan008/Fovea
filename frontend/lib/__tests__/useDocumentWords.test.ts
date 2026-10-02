@@ -91,6 +91,21 @@ describe("useDocumentWords", () => {
     await waitFor(() => expect(result.current.error).toBe("Document not found"));
   });
 
+  it("keeps the reader open when a later chunk fails, and says the rest didn't load", async () => {
+    documentMock.mockResolvedValue(doc());
+    contentMock
+      .mockImplementationOnce(async () => ({
+        document_id: 9, start: 0, count: 2, total: 5, page_count: 1, tokens: words.slice(0, 2),
+      }))
+      .mockRejectedValueOnce(new Error("Cannot reach the Fovea API."));
+
+    const { result } = renderHook(() => useDocumentWords(9, reader));
+
+    await waitFor(() => expect(result.current.streamError).toBe("Cannot reach the Fovea API."));
+    expect(result.current.error).toBeNull();
+    expect(result.current.loaded?.tokens).toHaveLength(2);
+  });
+
   it("waits for the sign-in before loading anything", () => {
     renderHook(() => useDocumentWords(9, null));
 
