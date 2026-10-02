@@ -1,23 +1,19 @@
 "use client";
 
+/*
+ * The library: upload PDFs, continue the last one, see progress, delete.
+ *
+ * Docs: ./architecture.md
+ */
+
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { UploadDropzone } from "@/components/UploadDropzone";
 import { api } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
 import { DEFAULT_WPM } from "@/lib/constants";
+import { formatDuration } from "@/lib/format";
 import type { Doc } from "@/lib/types";
-
-/** Matches the backend's completion threshold for analytics. */
-const FINISHED_PERCENT = 95;
-
-function readingTime(words: number, wpm: number) {
-  const mins = Math.max(1, Math.round(words / wpm));
-  if (mins < 60) return `${mins} min`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m === 0 ? `${h} h` : `${h} h ${m} min`;
-}
 
 function DocumentRow({
   doc,
@@ -29,7 +25,7 @@ function DocumentRow({
   onDelete: (doc: Doc) => void;
 }) {
   const percent = doc.progress?.percent_complete ?? 0;
-  const finished = percent >= FINISHED_PERCENT;
+  const finished = doc.progress?.finished ?? false;
   const started = !finished && (doc.progress?.word_index ?? 0) > 0;
 
   return (
@@ -44,7 +40,7 @@ function DocumentRow({
         </Link>
         <p className="mt-1 text-sm text-faint">
           {doc.page_count} {doc.page_count === 1 ? "page" : "pages"}, {doc.word_count.toLocaleString()} words,
-          about {readingTime(doc.word_count, wpm)} at {wpm} wpm
+          about {formatDuration(doc.word_count / wpm)} at {wpm} wpm
         </p>
       </div>
 
@@ -81,14 +77,16 @@ export default function LibraryPage() {
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(true);
 
+  // Keyed on the account, not the account object, so a speed update doesn't refetch.
+  const userId = user?.id;
   useEffect(() => {
-    if (!user) return;
+    if (userId === undefined) return;
     api
       .documents()
       .then(setDocs)
       .catch((err) => setError(err.message))
       .finally(() => setFetching(false));
-  }, [user]);
+  }, [userId]);
 
   const remove = async (target: Doc) => {
     if (!window.confirm(`Delete "${target.title}"? Your place in it and its reading history go too.`)) {
@@ -106,9 +104,7 @@ export default function LibraryPage() {
   const lastRead = useMemo(() => {
     const open = docs.filter(
       (doc) =>
-        doc.progress &&
-        doc.progress.word_index > 0 &&
-        doc.progress.percent_complete < FINISHED_PERCENT,
+        doc.progress && doc.progress.word_index > 0 && !doc.progress.finished,
     );
     open.sort((a, b) => b.progress!.updated_at.localeCompare(a.progress!.updated_at));
     return open[0] ?? null;

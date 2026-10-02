@@ -14,7 +14,7 @@ import fitz  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.db import init_db  # noqa: E402
+from app.db import migrate_database  # noqa: E402
 from app.main import app  # noqa: E402
 
 PASSAGE = (
@@ -51,7 +51,7 @@ def make_pdf(pages: int = 3, body: str = PASSAGE) -> bytes:
 
 @pytest.fixture(scope="session", autouse=True)
 def _database():
-    init_db()
+    migrate_database()
 
 
 @pytest.fixture

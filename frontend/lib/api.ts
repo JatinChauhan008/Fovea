@@ -117,7 +117,7 @@ export const api = {
   deleteDocument: (id: number) =>
     request<void>(`/documents/${id}`, { method: "DELETE" }),
 
-  content: (id: number, start = 0, limit = 20000) =>
+  content: (id: number, start: number, limit: number) =>
     request<Content>(`/documents/${id}/content?start=${start}&limit=${limit}`),
 
   // --- progress & sessions ---
@@ -134,8 +134,6 @@ export const api = {
         wpm,
       }),
     }),
-
-  progress: (documentId: number) => request<Progress>(`/progress/${documentId}`),
 
   recordSession: (payload: {
     document_id: number;

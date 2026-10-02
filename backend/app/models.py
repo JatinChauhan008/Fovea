@@ -4,6 +4,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -84,6 +85,8 @@ class ReadingSession(Base):
     """One stretch of actual reading - the raw material for analytics."""
 
     __tablename__ = "reading_sessions"
+    # Stats load one reader's sessions since a date: user first, then time.
+    __table_args__ = (Index("ix_reading_sessions_user_created", "user_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

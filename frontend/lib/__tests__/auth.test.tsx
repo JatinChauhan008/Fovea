@@ -6,7 +6,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, getToken, setToken } from "../api";
-import { AuthProvider } from "../auth";
+import { AuthProvider, useAuth, useRememberSpeed } from "../auth";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -53,5 +53,33 @@ describe("AuthProvider", () => {
     await userEvent.click(await screen.findByRole("button", { name: /try again/i }));
 
     expect(await screen.findByText("library")).toBeInTheDocument();
+  });
+
+  it("remembers the speed a reader leaves a document at, for the library's estimates", async () => {
+    me.mockResolvedValueOnce(reader);
+
+    function Reading({ wpm }: { wpm: number }) {
+      useRememberSpeed(wpm);
+      return null;
+    }
+    function Speed() {
+      return <p>speed {useAuth().user?.preferred_wpm}</p>;
+    }
+
+    const { rerender } = render(
+      <AuthProvider>
+        <Reading wpm={400} />
+        <Speed />
+      </AuthProvider>,
+    );
+    expect(await screen.findByText("speed 250")).toBeInTheDocument();
+
+    rerender(
+      <AuthProvider>
+        <Speed />
+      </AuthProvider>,
+    );
+
+    expect(await screen.findByText("speed 400")).toBeInTheDocument();
   });
 });

@@ -1,5 +1,11 @@
 "use client";
 
+/*
+ * Sign in or create an account.
+ *
+ * Docs: ../architecture.md
+ */
+
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";

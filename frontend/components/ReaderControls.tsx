@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { WPM_PRESETS } from "@/lib/constants";
+import { WPM_PRESETS, WPM_STEP } from "@/lib/constants";
+import { formatDuration } from "@/lib/format";
 
 interface Props {
   playing: boolean;
@@ -26,11 +27,7 @@ interface Props {
 
 function timeLeft(minutes: number) {
   if (minutes < 1) return "under a minute left";
-  const rounded = Math.ceil(minutes);
-  if (rounded < 60) return `${rounded} min left`;
-  const h = Math.floor(rounded / 60);
-  const m = rounded % 60;
-  return m === 0 ? `${h} h left` : `${h} h ${m} min left`;
+  return `${formatDuration(Math.ceil(minutes))} left`;
 }
 
 export function ReaderControls({
@@ -145,7 +142,7 @@ export function ReaderControls({
               type="range"
               min={minWpm}
               max={maxWpm}
-              step={25}
+              step={WPM_STEP}
               value={wpm}
               onChange={(event) => onWpm(Number(event.target.value))}
               aria-label="Words per minute"

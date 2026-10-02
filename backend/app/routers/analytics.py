@@ -5,6 +5,8 @@ Stats page flow: GET /analytics/summary.
 2. Count their documents, and the ones they've finished.
 3. Load the last year of sessions and work out the streak and daily chart in the
    reader's own time zone.
+
+Docs: ./architecture.md
 """
 
 from datetime import UTC, datetime
@@ -36,6 +38,7 @@ def summary(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> AnalyticsSummary:
+    """The reader's reading totals, streak and daily speed chart."""
     now = datetime.now(UTC)
 
     # Totals across everything they've read, added up by the database.

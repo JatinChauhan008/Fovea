@@ -1,3 +1,9 @@
+"""
+The Fovea API: settings, logging, middleware and routes, plus what happens at startup.
+
+Docs: ./routers/architecture.md
+"""
+
 import logging
 from contextlib import asynccontextmanager
 from typing import TypedDict
@@ -6,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.db import SessionLocal, init_db
+from app.db import SessionLocal, migrate_database
 from app.logging_setup import configure_logging, log_requests
 from app.routers import analytics, auth, documents, progress
 from app.services.cleanup import remove_unfinished_documents
@@ -32,7 +38,10 @@ def docs_urls(is_development: bool) -> DocsUrls:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    # Bring the database schema up to date (marking an older version's database first).
+    migrate_database()
+
+    # Clear out half-made documents that older versions could leave behind.
     with SessionLocal() as db:
         removed = remove_unfinished_documents(db)
     if removed:

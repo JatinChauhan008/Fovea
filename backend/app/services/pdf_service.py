@@ -76,8 +76,9 @@ def _parse_tokens(path: str, _mtime_ns: int, _size: int) -> list[dict]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def guess_title(meta: dict, filename: str) -> str:
-    title = (meta.get("title") or "").strip()
-    if title and len(title) > 3:
+def guess_title(pdf_title: str, filename: str) -> str:
+    """The PDF's own title if it has a real one, otherwise a tidied-up file name."""
+    title = pdf_title.strip()
+    if len(title) > 3:
         return title[:200]
     return Path(filename).stem.replace("_", " ").replace("-", " ").strip()[:200] or "Untitled"

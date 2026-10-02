@@ -149,14 +149,12 @@ Every route except `/health`, `/auth/register` and `/auth/login` needs an `Autho
 | `POST` | `/auth/register` | Create an account and return a token |
 | `POST` | `/auth/login` | Sign in (OAuth2 password form) |
 | `GET` | `/auth/me` | The signed-in user |
-| `PATCH` | `/auth/me` | Change the preferred reading speed |
 | `POST` | `/upload` | Upload a PDF and extract its text |
 | `GET` | `/documents` | List documents, each with its reading progress |
 | `GET` | `/documents/{id}` | One document's details |
 | `GET` | `/documents/{id}/content?start=&limit=` | A slice of the document's words (up to 50,000 at a time) |
 | `DELETE` | `/documents/{id}` | Delete a document, its files, progress and reading history |
 | `POST` | `/progress` | Save the reader's position |
-| `GET` | `/progress/{document_id}` | Get the saved position |
 | `POST` | `/sessions` | Log a stretch of reading |
 | `GET` | `/analytics/summary?utc_offset_minutes=` | Reading totals and speed by day, with days in the reader's time zone (`330` for India) |
 
@@ -173,22 +171,36 @@ Words are sent in a compact form to keep long documents small:
 ```
 backend/
   app/
-    main.py              FastAPI app, CORS, router setup
+    main.py              FastAPI app, middleware, startup (migrations, cleanup)
     config.py            settings, including the JWT secret check
-    db.py, models.py     SQLAlchemy engine and tables
+    db.py, models.py     SQLAlchemy engine, migrations runner and tables
     schemas.py           request and response models
     security.py          password hashing, JWTs, current-user dependency
-    routers/             auth, documents, progress, analytics
+    permissions.py       the one ownership check every document route uses
+    rate_limit.py        in-memory sign-in and sign-up limits
+    upload_limit.py      refuses oversized upload bodies before they are read
+    logging_setup.py     JSON log lines and the request log
+    routers/             auth, documents, progress, analytics (see routers/architecture.md)
+    queries/             database reads and writes, one module per area
     services/
-      pdf_service.py     text extraction with PyMuPDF
+      extraction.py      runs pdf_worker.py in a child process with a timeout
+      pdf_service.py     text extraction with PyMuPDF, word-file cache
       tokenizer.py       cleaning, ORP and timing
+      uploads.py         upload checks; storage.py does the file work
+      reading.py         rules for a reader's place and logged stretches
+      analytics.py       days, streak and chart maths for Stats
+  migrations/            Alembic migrations (0001 is the schema from before migrations)
   tests/
 frontend/
-  app/                   pages: library, login, read/[id], analytics (Stats)
+  app/                   pages: library, login, read/[id], analytics (see app/architecture.md)
   components/            word display, reader controls, upload box, chart, nav bar
   lib/
     useRsvp.ts           the reading loop: timing, seeking, logging reading sessions
+    useReader.ts         the loop joined to useProgressSaver (keeps the place saved)
+    useDocumentWords.ts  loads a document and streams its words in
+    useReaderKeys.ts     keyboard shortcuts and pausing when the tab is hidden
     api.ts, auth.tsx     API client and sign-in state
+    constants.ts         speed limits and defaults (mirrors the backend settings)
 ```
 
 ## Limitations
@@ -197,4 +209,4 @@ frontend/
 - **No OCR.** Scanned PDFs without a text layer are rejected.
 - **One machine only.** SQLite and local file storage are fine for personal use or a single server, but won't scale past one.
 - **Whole documents in the browser.** Every word of a document is eventually held in browser memory, which is fine for books but not for giant documents.
-- **No database migrations.** Tables are created at startup. If a column is removed, it stays in existing databases, unused.
+- **Migrations run at startup.** The backend applies any new Alembic migrations each time it starts. A database from before migrations existed is recognised and brought up to date without losing data. To add one, change `models.py`, then run `uv run alembic revision --autogenerate -m "what changed"` in `backend/` and read the generated file before committing it.

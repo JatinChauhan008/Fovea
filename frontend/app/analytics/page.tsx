@@ -1,9 +1,16 @@
 "use client";
 
+/*
+ * Stats: totals, speeds, streak and the daily speed chart, in the reader's time zone.
+ *
+ * Docs: ../architecture.md
+ */
+
 import { useEffect, useState } from "react";
 import { TrendChart } from "@/components/TrendChart";
 import { api } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
+import { formatDuration } from "@/lib/format";
 import type { Analytics } from "@/lib/types";
 
 function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
@@ -21,26 +28,20 @@ function shortDate(iso: string) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function duration(minutes: number) {
-  if (minutes < 60) return `${Math.round(minutes)} min`;
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  return m === 0 ? `${h} h` : `${h} h ${m} min`;
-}
-
 export default function AnalyticsPage() {
   const { user, loading } = useRequireAuth();
   const [data, setData] = useState<Analytics | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const userId = user?.id;
   useEffect(() => {
-    if (!user) return;
+    if (userId === undefined) return;
     // getTimezoneOffset counts minutes *behind* UTC, so flip its sign.
     api
       .analytics(-new Date().getTimezoneOffset())
       .then(setData)
       .catch((err) => setError(err.message));
-  }, [user]);
+  }, [userId]);
 
   if (loading || !user) return null;
 
@@ -63,7 +64,7 @@ export default function AnalyticsPage() {
         <>
           <dl className="mt-8 grid grid-cols-2 gap-x-6 gap-y-8 sm:grid-cols-4">
             <Stat label="Words read" value={data.words_read.toLocaleString()} />
-            <Stat label="Time reading" value={duration(data.minutes_read)} />
+            <Stat label="Time reading" value={formatDuration(data.minutes_read)} />
             <Stat
               label="Average speed"
               value={`${Math.round(data.average_wpm)}`}

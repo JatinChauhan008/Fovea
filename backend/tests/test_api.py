@@ -1,5 +1,7 @@
 """End-to-end tests over the HTTP API, from upload through analytics."""
 
+from pathlib import Path
+
 from tests.conftest import make_pdf
 
 
@@ -153,10 +155,13 @@ def test_progress_saves_and_resumes(client, auth, document):
     assert saved.status_code == 200
     assert saved.json()["word_index"] == 120
     assert 0 < saved.json()["percent_complete"] < 100
+    assert saved.json()["finished"] is False
 
-    resumed = client.get(f"/progress/{document['id']}", headers=auth).json()
+    resumed = client.get(f"/documents/{document['id']}", headers=auth).json()["progress"]
     assert resumed["word_index"] == 120
     assert resumed["wpm"] == 400
+    # The speed they last read at becomes their preferred speed.
+    assert client.get("/auth/me", headers=auth).json()["preferred_wpm"] == 400
 
     # The library listing carries progress so the UI can offer "continue reading".
     listed = client.get("/documents", headers=auth).json()
@@ -171,10 +176,36 @@ def test_progress_is_clamped_to_the_document(client, auth, document):
     )
     assert saved.json()["word_index"] == document["word_count"] - 1
     assert saved.json()["page"] == document["page_count"]
+    assert saved.json()["finished"] is True
 
 
-def test_missing_progress_returns_not_found(client, auth, document):
-    assert client.get(f"/progress/{document['id']}", headers=auth).status_code == 404
+def test_an_unstarted_document_has_no_place(client, auth, document):
+    assert client.get(f"/documents/{document['id']}", headers=auth).json()["progress"] is None
+
+
+def test_speeds_outside_the_reader_limits_are_refused(client, auth, document):
+    for wpm in (50, 1500):
+        response = client.post(
+            "/progress",
+            json={"document_id": document["id"], "word_index": 1, "wpm": wpm},
+            headers=auth,
+        )
+        assert response.status_code == 422
+
+
+def test_a_logged_stretch_never_counts_past_the_end_of_the_document(client, auth, document):
+    created = client.post(
+        "/sessions",
+        json={
+            "document_id": document["id"],
+            "start_index": 0,
+            "end_index": 10**9,
+            "wpm": 300,
+            "duration_seconds": 30.0,
+        },
+        headers=auth,
+    )
+    assert created.json()["words_read"] == document["word_count"]
 
 
 def test_sessions_are_logged(client, auth, document):
@@ -227,6 +258,20 @@ def test_analytics_are_empty_for_a_new_reader(client, auth):
     assert body["documents_completed"] == 0
 
 
+def test_a_document_whose_text_has_gone_missing_says_so(client, auth, document):
+    from app.db import SessionLocal
+    from app.models import Document
+
+    with SessionLocal() as db:
+        tokens_path = db.get(Document, document["id"]).tokens_path
+    Path(tokens_path).unlink()
+
+    response = client.get(f"/documents/{document['id']}/content", headers=auth)
+
+    assert response.status_code == 410
+    assert "missing" in response.json()["detail"]
+
+
 def test_delete_removes_the_document_and_its_text(client, auth):
     created = client.post(
         "/upload",
@@ -252,7 +297,6 @@ def test_another_reader_cannot_touch_a_document(client, auth, intruder, document
 
     assert client.get(f"/documents/{doc_id}", headers=intruder).status_code == 404
     assert client.get(f"/documents/{doc_id}/content", headers=intruder).status_code == 404
-    assert client.get(f"/progress/{doc_id}", headers=intruder).status_code == 404
     assert (
         client.post(
             "/progress", json={"document_id": doc_id, "word_index": 9}, headers=intruder

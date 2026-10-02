@@ -15,7 +15,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 
 from app.config import get_settings
 
@@ -66,6 +66,17 @@ class RateLimiter:
 _settings = get_settings()
 login_limiter = RateLimiter(_settings.login_attempts, _settings.login_window_seconds)
 signup_limiter = RateLimiter(_settings.signup_attempts, _settings.signup_window_seconds)
+
+
+def client_address(request: Request) -> str:
+    """The caller's network address (a proxy's, unless forwarded headers are trusted)."""
+    return request.client.host if request.client else "unknown"
+
+
+def login_attempt_key(request: Request, email: str) -> str:
+    """Sign-in attempts are counted per address and email, so guessing one account
+    doesn't lock out other people signing in from the same network."""
+    return f"{client_address(request)}:{email.lower()}"
 
 
 def enforce_rate_limit(limiter: RateLimiter, key: str, label: str) -> None:
