@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -11,6 +12,7 @@ from app.db import get_db
 from app.models import User
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 CREDENTIALS_ERROR = HTTPException(
@@ -42,9 +44,11 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         user_id = int(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError) as exc:
+        logger.info("token rejected", extra={"reason": type(exc).__name__})
         raise CREDENTIALS_ERROR from exc
 
     user = db.get(User, user_id)
     if user is None:
+        logger.info("token rejected", extra={"reason": "unknown user"})
         raise CREDENTIALS_ERROR
     return user

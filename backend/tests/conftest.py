@@ -93,3 +93,12 @@ def document(client, auth):
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """Every test starts with empty sign-in counters, since they all share one client address."""
+    from app.rate_limit import login_limiter, signup_limiter
+
+    login_limiter.reset()
+    signup_limiter.reset()

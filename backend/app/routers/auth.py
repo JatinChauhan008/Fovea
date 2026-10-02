@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.models import User
+from app.rate_limit import enforce_rate_limit, login_limiter, signup_limiter
 from app.schemas import Token, UserCreate, UserOut
 from app.security import create_access_token, get_current_user, hash_password, verify_password
 
@@ -13,8 +14,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 settings = get_settings()
 
 
+def client_address(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-def register(payload: UserCreate, db: Session = Depends(get_db)) -> Token:
+def register(payload: UserCreate, request: Request, db: Session = Depends(get_db)) -> Token:
+    enforce_rate_limit(signup_limiter, client_address(request), "signup")
     existing = db.scalar(select(User).where(User.email == payload.email.lower()))
     if existing:
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")
@@ -32,7 +38,14 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> Token:
 
 
 @router.post("/login", response_model=Token)
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> Token:
+def login(
+    request: Request,
+    form: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+) -> Token:
+    # Keyed on address and email, so guessing one account doesn't lock out others.
+    attempt_key = f"{client_address(request)}:{form.username.lower()}"
+    enforce_rate_limit(login_limiter, attempt_key, "login")
     user = db.scalar(select(User).where(User.email == form.username.lower()))
     if not user or not verify_password(form.password, user.hashed_password):
         raise HTTPException(

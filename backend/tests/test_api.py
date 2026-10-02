@@ -264,3 +264,16 @@ def test_another_reader_cannot_touch_a_document(client, auth, intruder, document
     assert client.get(f"/documents/{doc_id}/content", headers=auth).status_code == 200
     assert client.get("/analytics/summary", headers=auth).json()["words_read"] == 0
     assert client.get("/documents", headers=intruder).json() == []
+
+
+def test_a_renamed_non_pdf_is_refused_and_not_kept(client, auth):
+    from app.config import get_settings
+
+    response = client.post(
+        "/upload", files={"file": ("fake.pdf", b"PK zip bytes", "application/pdf")}, headers=auth
+    )
+
+    assert response.status_code == 400
+    user_id = client.get("/auth/me", headers=auth).json()["id"]
+    user_dir = get_settings().storage_dir / str(user_id)
+    assert not user_dir.exists() or list(user_dir.iterdir()) == []

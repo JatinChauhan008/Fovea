@@ -1,4 +1,4 @@
-import asyncio
+import logging
 import uuid
 from pathlib import Path
 
@@ -6,22 +6,24 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import MB, get_settings
 from app.db import get_db
 from app.models import DOCUMENT_READY, Document, Progress, User
 from app.schemas import ContentOut, DocumentOut, DocumentWithProgress, ProgressOut
 from app.security import get_current_user
-from app.services.pdf_service import (
-    PdfExtractionError,
-    guess_title,
-    process_pdf,
-    read_tokens,
-    write_tokens,
+from app.services.extraction import extract_pdf
+from app.services.pdf_service import PdfExtractionError, guess_title, read_tokens
+from app.services.storage import (
+    UploadTooLarge,
+    remove_files,
+    save_upload,
+    starts_like_pdf,
+    storage_used_bytes,
 )
-from app.services.storage import remove_files
 
 router = APIRouter(tags=["documents"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def get_owned_document(document_id: int, user: User, db: Session) -> Document:
@@ -46,57 +48,71 @@ def progress_out(progress: Progress | None, word_count: int) -> ProgressOut | No
 
 
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
-async def upload(
+def upload(
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
+    # A plain function, so FastAPI runs it on a worker thread: the file copy,
+    # extraction and database work never block other requests.
     filename = file.filename or "document.pdf"
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only PDF files are supported")
 
-    payload = await file.read()
-    size_mb = len(payload) / (1024 * 1024)
-    if size_mb > settings.max_upload_mb:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"File is {size_mb:.1f} MB; the limit is {settings.max_upload_mb} MB",
-        )
-    if not payload.startswith(b"%PDF"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That file is not a valid PDF")
-
     user_dir: Path = settings.storage_dir / str(user.id)
     user_dir.mkdir(parents=True, exist_ok=True)
-
     handle = uuid.uuid4().hex
     pdf_path = user_dir / f"{handle}.pdf"
     tokens_path = user_dir / f"{handle}.tokens.json"
-    pdf_path.write_bytes(payload)
+
+    try:
+        save_upload(file.file, pdf_path, max_bytes=int(settings.max_upload_mb * MB))
+    except UploadTooLarge as exc:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE,
+            f"That file is too big. The limit is {settings.max_upload_mb:g} MB.",
+        ) from exc
 
     # The row is only created once the text is out, so a failed upload leaves no
     # half-made document in the library - and its files are removed too.
     try:
-        tokens, info = await asyncio.to_thread(process_pdf, pdf_path)
-        write_tokens(tokens, tokens_path)
+        if not starts_like_pdf(pdf_path):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "That file is not a valid PDF")
+        if storage_used_bytes(user_dir) > settings.max_storage_mb * MB:
+            raise HTTPException(
+                status.HTTP_413_CONTENT_TOO_LARGE,
+                "You've used all your storage space. Delete a document to add another.",
+            )
+        extracted = extract_pdf(pdf_path, tokens_path, settings.pdf_timeout_seconds)
         document = Document(
             user_id=user.id,
-            title=guess_title(info["metadata"], filename),
+            title=guess_title({"title": extracted.title}, filename),
             original_filename=filename,
             stored_path=str(pdf_path),
             tokens_path=str(tokens_path),
-            page_count=info["page_count"],
-            word_count=len(tokens),
+            page_count=extracted.page_count,
+            word_count=extracted.word_count,
             status=DOCUMENT_READY,
         )
         db.add(document)
         db.commit()
     except PdfExtractionError as exc:
         remove_files(pdf_path, tokens_path)
+        logger.info("upload rejected", extra={"user_id": user.id, "reason": str(exc)})
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     except Exception:
         remove_files(pdf_path, tokens_path)
         raise
 
+    logger.info(
+        "document uploaded",
+        extra={
+            "user_id": user.id,
+            "document_id": document.id,
+            "pages": document.page_count,
+            "words": document.word_count,
+        },
+    )
     db.refresh(document)
     return DocumentOut.model_validate(document)
 

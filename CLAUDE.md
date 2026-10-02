@@ -58,7 +58,9 @@ Every command runs from its package directory — prefix with an absolute `cd`.
 - **No migrations exist.** A schema change to an existing table won't reach existing SQLite databases. Flag any model change to the user and agree on a plan (manual `ALTER`, or introducing Alembic) before making it.
 - `MAX_UPLOAD_MB` is duplicated in `backend/app/config.py` and `frontend/lib/constants.ts` — change both together.
 - Word payloads use a compact shape (`t`, `o`, `m`, `p`) to keep large documents small; keep the backend schema and `frontend/lib/types.ts` in sync.
-- PDF parsing is CPU-bound and is offloaded from the event loop in the upload route — keep it that way.
+- PDF extraction runs in a child process with a timeout (`app/services/extraction.py` → `pdf_worker.py`); never call PyMuPDF in the server process. The upload route is a plain `def` so FastAPI runs it off the event loop.
+- Logging is JSON via `app/logging_setup.py`; pass fields with `extra=`, never log tokens, passwords or emails.
+- Sign-in/sign-up rate limits live in memory (`app/rate_limit.py`) and assume a single server process.
 
 ## Project memory
 

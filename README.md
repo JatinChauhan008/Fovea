@@ -32,7 +32,7 @@ uv run uvicorn app.main:app --reload --port 8000
 
 Don't skip the `.env` step. The example file sets `FOVEA_ENV=development`, which lets the API run with the placeholder JWT secret on your own machine. Without it, the API refuses to start (see [Configuration](#configuration)).
 
-The API is now running at http://localhost:8000, with interactive docs at http://localhost:8000/docs.
+The API is now running at http://localhost:8000, with interactive docs at http://localhost:8000/docs (served only when `FOVEA_ENV=development`).
 
 ### 2. Start the frontend
 
@@ -122,6 +122,10 @@ The backend reads its settings from environment variables or `backend/.env`. Eve
 | `DATABASE_URL` | `sqlite:///backend/fovea.db` | Any SQLAlchemy URL. |
 | `STORAGE_DIR` | `backend/storage` | Where uploaded PDFs and their extracted words are kept. |
 | `MAX_UPLOAD_MB` | `40` | The frontend checks the same limit in `frontend/lib/constants.ts` (`MAX_UPLOAD_MB`). Change both together. |
+| `MAX_STORAGE_MB` | `1000` | Space each account's PDFs and extracted text may use in total. |
+| `PDF_TIMEOUT_SECONDS` | `60` | How long text extraction may run before the upload is refused. Extraction runs in a separate process, so a stuck PDF is stopped. |
+| `LOGIN_ATTEMPTS` / `LOGIN_WINDOW_SECONDS` | `10` / `300` | Sign-in attempts allowed per address and email in the window. Further attempts get `429`. |
+| `SIGNUP_ATTEMPTS` / `SIGNUP_WINDOW_SECONDS` | `10` / `3600` | Accounts that can be created from one address in the window. |
 | `DEFAULT_WPM` / `MIN_WPM` / `MAX_WPM` | `250` / `100` / `900` | Reading speed defaults and limits. |
 | `CORS_ORIGINS` | `["http://localhost:3000","http://127.0.0.1:3000"]` | Add your frontend's address here if it runs somewhere else. |
 
@@ -138,7 +142,7 @@ The backend tests use a throwaway database and storage folder, so they never tou
 
 ## API
 
-Every route except `/health` needs an `Authorization: Bearer <token>` header. Use the token that `/auth/register` or `/auth/login` returns. The full schema is at `/docs` while the backend is running.
+Every route except `/health`, `/auth/register` and `/auth/login` needs an `Authorization: Bearer <token>` header. Use the token that `/auth/register` or `/auth/login` returns. In development the full schema is at `/docs`. Sign-in and sign-up are rate limited (see [Configuration](#configuration)); the limits are kept in memory, so they assume one server process.
 
 | Method | Route | What it does |
 |---|---|---|

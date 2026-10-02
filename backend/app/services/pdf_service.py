@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf
 
 from app.services.tokenizer import Token, tokenize_pages
 
@@ -17,15 +17,17 @@ class PdfExtractionError(RuntimeError):
 def extract_pages(path: Path) -> tuple[list[str], dict]:
     """Return (page texts, document metadata)."""
     try:
-        with fitz.open(path) as doc:
+        with pymupdf.open(path) as doc:
             if doc.is_encrypted and not doc.authenticate(""):
                 raise PdfExtractionError("This PDF is password protected.")
             pages = [page.get_text("text") for page in doc]
             meta = dict(doc.metadata or {})
     except PdfExtractionError:
         raise
-    except Exception as exc:  # pragma: no cover - depends on the uploaded file
-        raise PdfExtractionError(f"Could not read this PDF: {exc}") from exc
+    except Exception as exc:
+        # The library's own message means nothing to a reader; the cause stays attached
+        # for the log.
+        raise PdfExtractionError("This file couldn't be read as a PDF.") from exc
 
     return pages, meta
 
