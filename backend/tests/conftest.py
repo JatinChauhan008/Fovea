@@ -60,8 +60,7 @@ def client():
         yield test_client
 
 
-@pytest.fixture
-def auth(client):
+def register_reader(client) -> dict[str, str]:
     """Register a fresh user and return ready-to-use auth headers."""
     import uuid
 
@@ -72,6 +71,17 @@ def auth(client):
     assert response.status_code == 201, response.text
     token = response.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def auth(client):
+    return register_reader(client)
+
+
+@pytest.fixture
+def intruder(client):
+    """A second, unrelated reader."""
+    return register_reader(client)
 
 
 @pytest.fixture

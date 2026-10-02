@@ -2,8 +2,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-
 # --- auth ---------------------------------------------------------------
+
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -26,6 +26,7 @@ class Token(BaseModel):
 
 
 # --- documents ----------------------------------------------------------
+
 
 class DocumentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -61,6 +62,7 @@ class ContentOut(BaseModel):
 
 
 # --- progress & sessions ------------------------------------------------
+
 
 class ProgressIn(BaseModel):
     document_id: int
@@ -100,6 +102,7 @@ class SessionOut(BaseModel):
 
 
 # --- analytics --------------------------------------------------------
+
 
 class SpeedPoint(BaseModel):
     date: str

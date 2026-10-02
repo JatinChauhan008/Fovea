@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 
 # Words longer than this are treated as "complex" and held longer.
 LONG_WORD_LEN = 12
@@ -25,10 +25,20 @@ CLAUSE_END = tuple(",;:")
 
 # Ligatures and typographic characters PDFs love and tokenizers hate.
 _REPLACEMENTS = {
-    "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl",
-    "‘": "'", "’": "'", "“": '"', "”": '"',
-    "–": "-", "—": "-", "−": "-",
-    " ": " ", "​": "",
+    "ﬀ": "ff",
+    "ﬁ": "fi",
+    "ﬂ": "fl",
+    "ﬃ": "ffi",
+    "ﬄ": "ffl",
+    "‘": "'",
+    "’": "'",
+    "“": '"',
+    "”": '"',
+    "–": "-",
+    "—": "-",
+    "−": "-",
+    " ": " ",
+    "​": "",
 }
 
 _HYPHEN_LINEBREAK = re.compile(r"(\w)-\s*\n\s*(\w)")
@@ -97,11 +107,7 @@ def find_boilerplate(pages: list[str], threshold: float = 0.6) -> set[str]:
 
     counts: Counter[str] = Counter()
     for page in pages:
-        seen = {
-            line.strip()
-            for line in page.splitlines()
-            if 0 < len(line.strip()) <= 80
-        }
+        seen = {line.strip() for line in page.splitlines() if 0 < len(line.strip()) <= 80}
         counts.update(seen)
 
     cutoff = max(3, int(len(pages) * threshold))
@@ -137,4 +143,3 @@ def tokenize_pages(pages: list[str]) -> list[Token]:
             )
 
     return tokens
-

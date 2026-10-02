@@ -53,19 +53,19 @@ def summary(
     progress_rows = db.scalars(select(Progress).where(Progress.user_id == user.id))
     for row in progress_rows:
         document = db.get(Document, row.document_id)
-        if document and document.word_count:
-            if row.word_index / document.word_count >= COMPLETION_THRESHOLD:
-                completed += 1
+        if (
+            document
+            and document.word_count
+            and row.word_index / document.word_count >= COMPLETION_THRESHOLD
+        ):
+            completed += 1
 
     words_read = sum(s.words_read for s in sessions)
     seconds = sum(s.duration_seconds for s in sessions)
 
     # Weight speed by words actually read, so a 30-second burst does not
     # outweigh a twenty-minute session.
-    if words_read:
-        average_wpm = sum(s.wpm * s.words_read for s in sessions) / words_read
-    else:
-        average_wpm = 0.0
+    average_wpm = sum(s.wpm * s.words_read for s in sessions) / words_read if words_read else 0.0
 
     # Daily trend, one point per day the reader was active.
     per_day: dict[date, list[ReadingSession]] = defaultdict(list)

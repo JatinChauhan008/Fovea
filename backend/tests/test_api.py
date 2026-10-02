@@ -17,9 +17,7 @@ def test_register_login_and_identity(client):
     duplicate = client.post("/auth/register", json={"email": email, "password": "a-good-password"})
     assert duplicate.status_code == 409
 
-    logged_in = client.post(
-        "/auth/login", data={"username": email, "password": "a-good-password"}
-    )
+    logged_in = client.post("/auth/login", data={"username": email, "password": "a-good-password"})
     assert logged_in.status_code == 200
 
     headers = {"Authorization": f"Bearer {logged_in.json()['access_token']}"}
@@ -97,9 +95,7 @@ def test_one_reader_cannot_read_anothers_document(client, auth, document):
     headers = {"Authorization": f"Bearer {other.json()['access_token']}"}
 
     assert client.get(f"/documents/{document['id']}", headers=headers).status_code == 404
-    assert (
-        client.get(f"/documents/{document['id']}/content", headers=headers).status_code == 404
-    )
+    assert client.get(f"/documents/{document['id']}/content", headers=headers).status_code == 404
 
 
 def test_progress_saves_and_resumes(client, auth, document):
@@ -191,3 +187,31 @@ def test_delete_removes_the_document_and_its_text(client, auth):
 
     assert client.delete(f"/documents/{created['id']}", headers=auth).status_code == 204
     assert client.get(f"/documents/{created['id']}", headers=auth).status_code == 404
+
+
+def test_another_reader_cannot_touch_a_document(client, auth, intruder, document):
+    doc_id = document["id"]
+    session = {
+        "document_id": doc_id,
+        "start_index": 0,
+        "end_index": 50,
+        "wpm": 300,
+        "duration_seconds": 10.0,
+    }
+
+    assert client.get(f"/documents/{doc_id}", headers=intruder).status_code == 404
+    assert client.get(f"/documents/{doc_id}/content", headers=intruder).status_code == 404
+    assert client.get(f"/progress/{doc_id}", headers=intruder).status_code == 404
+    assert (
+        client.post(
+            "/progress", json={"document_id": doc_id, "word_index": 9}, headers=intruder
+        ).status_code
+        == 404
+    )
+    assert client.post("/sessions", json=session, headers=intruder).status_code == 404
+    assert client.delete(f"/documents/{doc_id}", headers=intruder).status_code == 404
+
+    # Nothing the intruder sent reached the owner's data.
+    assert client.get(f"/documents/{doc_id}", headers=auth).json()["progress"] is None
+    assert client.get("/analytics/summary", headers=auth).json()["words_read"] == 0
+    assert client.get("/documents", headers=intruder).json() == []
