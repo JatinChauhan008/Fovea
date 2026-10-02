@@ -1,13 +1,30 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.config import get_settings
+
+_settings = get_settings()
 
 # --- auth ---------------------------------------------------------------
 
+# bcrypt only hashes the first 72 bytes, and the installed version refuses longer input.
+MAX_PASSWORD_BYTES = 72
+
+
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def _fits_bcrypt(cls, password: str) -> str:
+        if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+            raise ValueError(
+                f"Password is too long: use at most {MAX_PASSWORD_BYTES} bytes "
+                "(72 plain letters, fewer with accents or symbols)"
+            )
+        return password
 
 
 class UserOut(BaseModel):
@@ -26,6 +43,7 @@ class Token(BaseModel):
 
 
 # --- documents ----------------------------------------------------------
+
 
 class DocumentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -62,11 +80,12 @@ class ContentOut(BaseModel):
 
 # --- progress & sessions ------------------------------------------------
 
+
 class ProgressIn(BaseModel):
     document_id: int
     word_index: int = Field(ge=0)
     page: int = Field(ge=1, default=1)
-    wpm: int = Field(ge=50, le=1500, default=250)
+    wpm: int = Field(ge=_settings.min_wpm, le=_settings.max_wpm, default=_settings.default_wpm)
 
 
 class ProgressOut(BaseModel):
@@ -78,13 +97,14 @@ class ProgressOut(BaseModel):
     wpm: int
     updated_at: datetime
     percent_complete: float = 0.0
+    finished: bool = False
 
 
 class SessionIn(BaseModel):
     document_id: int
     start_index: int = Field(ge=0)
     end_index: int = Field(ge=0)
-    wpm: int = Field(ge=50, le=1500)
+    wpm: int = Field(ge=_settings.min_wpm, le=_settings.max_wpm)
     duration_seconds: float = Field(ge=0)
 
 
@@ -100,6 +120,7 @@ class SessionOut(BaseModel):
 
 
 # --- analytics --------------------------------------------------------
+
 
 class SpeedPoint(BaseModel):
     date: str

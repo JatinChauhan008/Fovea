@@ -5,6 +5,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+MB = 1024 * 1024
 
 _DEFAULT_SECRET = "dev-secret-change-me"
 _MIN_SECRET_LEN = 32
@@ -31,16 +32,30 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # Uploads
-    max_upload_mb: int = 40
+    max_upload_mb: float = 40
+    # Total space each reader's PDFs and extracted text may take up.
+    max_storage_mb: float = 1000
+    # How long text extraction may run before the upload is given up on.
+    pdf_timeout_seconds: float = 60
+
+    # Rate limits (per client address; per address + email for sign-in)
+    login_attempts: int = 10
+    login_window_seconds: int = 5 * 60
+    signup_attempts: int = 10
+    signup_window_seconds: int = 60 * 60
 
     # Reading defaults
     default_wpm: int = 250
     min_wpm: int = 100
     max_wpm: int = 900
 
+    @property
+    def is_development(self) -> bool:
+        return self.fovea_env.lower() == "development"
+
     @model_validator(mode="after")
     def _validate_jwt_secret(self) -> "Settings":
-        is_dev = self.fovea_env.lower() == "development"
+        is_dev = self.is_development
         if self.jwt_secret == _DEFAULT_SECRET and not is_dev:
             raise ValueError(
                 "JWT_SECRET is set to the public default value. "

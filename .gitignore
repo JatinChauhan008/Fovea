@@ -26,3 +26,6 @@ npm-debug.log*
 # Editors
 .vscode/
 .idea/
+
+# Agent worktrees
+.worktrees/

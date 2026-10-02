@@ -24,6 +24,27 @@ export interface ReadingStretch {
 
 const SENTENCE_END = /[.!?]["')\]]?$/;
 
+/** A jump to somewhere that hasn't streamed in yet: a word position or a page. */
+type Pending = { index: number } | { page: number };
+
+/**
+ * Where a pending jump lands now: a word index once it has loaded, `null` to give
+ * up (the page doesn't exist and everything has loaded), or `undefined` to keep waiting.
+ */
+function resolvePending(
+  pending: Pending,
+  tokens: WordToken[],
+  fullyLoaded: boolean,
+): number | null | undefined {
+  if ("index" in pending) {
+    if (pending.index < tokens.length) return pending.index;
+    return fullyLoaded ? Math.max(tokens.length - 1, 0) : undefined;
+  }
+  const found = tokens.findIndex((token) => token.p >= pending.page);
+  if (found >= 0) return found;
+  return fullyLoaded ? null : undefined;
+}
+
 /**
  * Drives the one-word-at-a-time reading loop.
  *
@@ -65,6 +86,24 @@ export function useRsvp({
   const fullyLoaded = loaded >= totalWords;
   const finished = fullyLoaded && loaded > 0 && index >= loaded - 1;
 
+  // Read by the word timer when it fires, so new chunks don't have to restart it.
+  const loadedRef = useRef(loaded);
+  const fullyLoadedRef = useRef(fullyLoaded);
+  useEffect(() => {
+    loadedRef.current = loaded;
+    fullyLoadedRef.current = fullyLoaded;
+  }, [loaded, fullyLoaded]);
+
+  // A jump past the loaded words waits here and lands once the words arrive.
+  const [pending, setPending] = useState<Pending | null>(null);
+  if (pending) {
+    const landing = resolvePending(pending, tokens, fullyLoaded);
+    if (landing !== undefined) {
+      setPending(null);
+      if (landing !== null) setIndex(landing);
+    }
+  }
+
   const openStretch = useCallback((at: number, atWpm: number) => {
     stretch.current = { start: at, wpm: atWpm, since: performance.now() };
   }, []);
@@ -93,6 +132,9 @@ export function useRsvp({
     // Pressing play on the last word starts the document over.
     const from = finished ? 0 : index;
     if (from !== index) setIndex(from);
+    // Reading from here replaces any jump still waiting to load; landing it later,
+    // mid-stretch, would log the skipped words as read.
+    setPending(null);
     openStretch(from, wpm);
     setPlaying(true);
   }, [finished, index, loaded, openStretch, wpm]);
@@ -102,9 +144,23 @@ export function useRsvp({
     else play();
   }, [playing, pause, play]);
 
+  /** Stop reading and wait for a jump target that hasn't loaded yet. */
+  const waitFor = useCallback(
+    (target: Pending) => {
+      if (playing) {
+        closeStretch(index);
+        setPlaying(false);
+      }
+      setPending(target);
+    },
+    [closeStretch, index, playing],
+  );
+
   const seek = useCallback(
     (next: number) => {
       if (loaded === 0) return;
+      if (next > loaded - 1 && !fullyLoaded) return waitFor({ index: next });
+      setPending(null);
       const target = Math.max(0, Math.min(next, loaded - 1));
       if (playing) {
         closeStretch(index);
@@ -112,7 +168,7 @@ export function useRsvp({
       }
       setIndex(target);
     },
-    [closeStretch, index, loaded, openStretch, playing, wpm],
+    [closeStretch, fullyLoaded, index, loaded, openStretch, playing, waitFor, wpm],
   );
 
   const setWpm = useCallback(
@@ -127,7 +183,10 @@ export function useRsvp({
     [closeStretch, index, openStretch, playing, wpm],
   );
 
-  const stepForward = useCallback(() => seek(index + 1), [index, seek]);
+  // A single step only moves within what has loaded; it never waits for more.
+  const stepForward = useCallback(() => {
+    if (index + 1 < loaded) seek(index + 1);
+  }, [index, loaded, seek]);
   const stepBack = useCallback(() => seek(index - 1), [index, seek]);
 
   /** Jump to the start of the previous or next sentence. */
@@ -155,22 +214,27 @@ export function useRsvp({
     (page: number) => {
       const target = tokens.findIndex((token) => token.p >= page);
       if (target >= 0) seek(target);
+      else if (!fullyLoaded) waitFor({ page });
     },
-    [seek, tokens],
+    [fullyLoaded, seek, tokens, waitFor],
   );
 
   // The loop itself: one timer per word, rescheduled as the index advances.
   // If reading outruns the stream, it simply waits here until more words arrive.
+  // It depends only on what changes the current word's timing, so a newly
+  // arrived chunk doesn't restart the word on screen.
+  const atLoadedEnd = index >= loaded - 1;
+  const multiplier = tokens[index]?.m ?? 1;
   useEffect(() => {
-    if (!playing || index >= loaded - 1) return;
+    if (!playing || atLoadedEnd) return;
 
-    const delay = (60_000 / wpm) * (tokens[index]?.m ?? 1);
+    const delay = (60_000 / wpm) * multiplier;
 
     const timer = window.setTimeout(() => {
       const next = index + 1;
       setIndex(next);
 
-      if (fullyLoaded && next >= loaded - 1) {
+      if (fullyLoadedRef.current && next >= loadedRef.current - 1) {
         closeStretch(next);
         setPlaying(false);
         finishRef.current?.();
@@ -178,7 +242,7 @@ export function useRsvp({
     }, delay);
 
     return () => window.clearTimeout(timer);
-  }, [closeStretch, fullyLoaded, index, loaded, playing, tokens, wpm]);
+  }, [atLoadedEnd, closeStretch, index, multiplier, playing, wpm]);
 
   const current = tokens[index];
 
@@ -197,6 +261,8 @@ export function useRsvp({
     finished,
     token: current,
     page: current?.p ?? 1,
+    /** The page a "go to page" is waiting to load, if any. */
+    waitingForPage: pending && "page" in pending ? pending.page : null,
     percent: progress.percent,
     minutesLeft: progress.minutesLeft,
     setWpm,

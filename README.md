@@ -32,7 +32,7 @@ uv run uvicorn app.main:app --reload --port 8000
 
 Don't skip the `.env` step. The example file sets `FOVEA_ENV=development`, which lets the API run with the placeholder JWT secret on your own machine. Without it, the API refuses to start (see [Configuration](#configuration)).
 
-The API is now running at http://localhost:8000, with interactive docs at http://localhost:8000/docs.
+The API is now running at http://localhost:8000, with interactive docs at http://localhost:8000/docs (served only when `FOVEA_ENV=development`).
 
 ### 2. Start the frontend
 
@@ -50,7 +50,7 @@ Open http://localhost:3000, create an account and add a PDF. Text-based PDFs up 
 
 ## Using the reader
 
-Press **Space** to start. When you pause, the words around your position appear in grey underneath, so you can find your place again.
+Press **Space** (or tap the word) to start. When you pause, the words around your position appear in grey underneath, so you can find your place again.
 
 | Key | Action |
 |---|---|
@@ -64,7 +64,7 @@ You can also drag the position bar, type a page number into **Go to page**, or p
 
 Your place and speed are saved every few seconds while you read, and again when you leave. The next time you open the document, it picks up at the same word. Switching to another tab pauses the reader, because browsers slow down timers in background tabs and your position would otherwise creep forward.
 
-**Stats** shows the total words you've read, your time spent reading, your average and fastest speeds, the documents you've finished, and a chart of your speed by day. A reading session is logged whenever you pause, jump somewhere else, change speed, finish or leave. Words you skip past are never counted as read.
+**Stats** shows the total words you've read, your time spent reading, your average and fastest speeds, the documents you've finished, and a chart of your speed by day. A reading session is logged whenever you pause, jump somewhere else, change speed, finish or leave. Words you skip past are never counted as read. Days follow your own clock, and the fastest speed ignores stretches shorter than 50 words, so briefly nudging the speed up doesn't count.
 
 ## How it works
 
@@ -122,6 +122,10 @@ The backend reads its settings from environment variables or `backend/.env`. Eve
 | `DATABASE_URL` | `sqlite:///backend/fovea.db` | Any SQLAlchemy URL. |
 | `STORAGE_DIR` | `backend/storage` | Where uploaded PDFs and their extracted words are kept. |
 | `MAX_UPLOAD_MB` | `40` | The frontend checks the same limit in `frontend/lib/constants.ts` (`MAX_UPLOAD_MB`). Change both together. |
+| `MAX_STORAGE_MB` | `1000` | Space each account's PDFs and extracted text may use in total. |
+| `PDF_TIMEOUT_SECONDS` | `60` | How long text extraction may run before the upload is refused. Extraction runs in a separate process, so a stuck PDF is stopped. |
+| `LOGIN_ATTEMPTS` / `LOGIN_WINDOW_SECONDS` | `10` / `300` | Sign-in attempts allowed per address and email in the window. Further attempts get `429`. |
+| `SIGNUP_ATTEMPTS` / `SIGNUP_WINDOW_SECONDS` | `10` / `3600` | Accounts that can be created from one address in the window. |
 | `DEFAULT_WPM` / `MIN_WPM` / `MAX_WPM` | `250` / `100` / `900` | Reading speed defaults and limits. |
 | `CORS_ORIGINS` | `["http://localhost:3000","http://127.0.0.1:3000"]` | Add your frontend's address here if it runs somewhere else. |
 
@@ -131,30 +135,28 @@ The frontend has a single setting: `NEXT_PUBLIC_API_URL`, the address of the bac
 
 ```bash
 cd backend && uv run pytest        # tokenizer, cleaning, auth, upload, progress, analytics
-cd frontend && npm test            # the reading loop in lib/useRsvp.ts (Vitest)
+cd frontend && npm test            # hooks, API client and components (Vitest)
 ```
 
-The backend tests use a throwaway database and storage folder, so they never touch your data. The frontend tests use fake timers to check that each word is held for exactly the right time, and that jumps and pauses are logged correctly.
+The backend tests use a throwaway database and storage folder, so they never touch your data. The frontend tests use fake timers to check that each word is held for exactly the right time and that jumps and pauses are logged correctly, and cover saving, loading, keyboard shortcuts, uploads and the library rows.
 
 ## API
 
-Every route except `/health` needs an `Authorization: Bearer <token>` header. Use the token that `/auth/register` or `/auth/login` returns. The full schema is at `/docs` while the backend is running.
+Every route except `/health`, `/auth/register` and `/auth/login` needs an `Authorization: Bearer <token>` header. Use the token that `/auth/register` or `/auth/login` returns. In development the full schema is at `/docs`. Sign-in and sign-up are rate limited (see [Configuration](#configuration)); the limits are kept in memory, so they assume one server process.
 
 | Method | Route | What it does |
 |---|---|---|
 | `POST` | `/auth/register` | Create an account and return a token |
 | `POST` | `/auth/login` | Sign in (OAuth2 password form) |
 | `GET` | `/auth/me` | The signed-in user |
-| `PATCH` | `/auth/me` | Change the preferred reading speed |
 | `POST` | `/upload` | Upload a PDF and extract its text |
 | `GET` | `/documents` | List documents, each with its reading progress |
 | `GET` | `/documents/{id}` | One document's details |
 | `GET` | `/documents/{id}/content?start=&limit=` | A slice of the document's words (up to 50,000 at a time) |
 | `DELETE` | `/documents/{id}` | Delete a document, its files, progress and reading history |
 | `POST` | `/progress` | Save the reader's position |
-| `GET` | `/progress/{document_id}` | Get the saved position |
 | `POST` | `/sessions` | Log a stretch of reading |
-| `GET` | `/analytics/summary` | Reading totals and speed by day |
+| `GET` | `/analytics/summary?utc_offset_minutes=` | Reading totals and speed by day, with days in the reader's time zone (`330` for India) |
 
 Words are sent in a compact form to keep long documents small:
 
@@ -169,22 +171,40 @@ Words are sent in a compact form to keep long documents small:
 ```
 backend/
   app/
-    main.py              FastAPI app, CORS, router setup
+    main.py              FastAPI app, middleware, startup (migrations, cleanup)
     config.py            settings, including the JWT secret check
-    db.py, models.py     SQLAlchemy engine and tables
+    db.py, models.py     SQLAlchemy engine, migrations runner and tables
     schemas.py           request and response models
     security.py          password hashing, JWTs, current-user dependency
-    routers/             auth, documents, progress, analytics
+    permissions.py       the one ownership check every document route uses
+    rate_limit.py        in-memory sign-in and sign-up limits
+    upload_limit.py      refuses oversized upload bodies before they are read
+    logging_setup.py     JSON log lines and the request log
+    routers/             auth, documents, progress, analytics (see routers/architecture.md)
+    queries/             database reads and writes, one module per area
     services/
-      pdf_service.py     text extraction with PyMuPDF
+      cleanup.py         removes half-made documents left by older versions
+      extraction.py      runs pdf_worker.py in a child process with a timeout
+      pdf_service.py     text extraction with PyMuPDF, word-file cache
       tokenizer.py       cleaning, ORP and timing
+      uploads.py         upload checks; storage.py does the file work
+      reading.py         rules for a reader's place and logged stretches
+      analytics.py       days, streak and chart maths for Stats
+  migrations/            Alembic migrations (0001 is the schema from before migrations)
   tests/
 frontend/
-  app/                   pages: library, login, read/[id], analytics (Stats)
-  components/            word display, reader controls, upload box, chart, nav bar
+  app/                   pages: library, login, read/[id], analytics (see app/architecture.md)
+  components/            word display, reader controls, upload box, library row, chart, nav bar,
+                         PageParts (shared heading, error, link and loading pieces)
   lib/
     useRsvp.ts           the reading loop: timing, seeking, logging reading sessions
+    useReader.ts         the loop joined to useProgressSaver (keeps the place saved)
+    useDocumentWords.ts  loads a document and streams its words in
+    useReaderKeys.ts     keyboard shortcuts and pausing when the tab is hidden
+    useProgressSaver.ts  keeps the place saved and logs each stretch of reading
+    format.ts, wordSize.ts  reading-time text; shrinking long words to fit
     api.ts, auth.tsx     API client and sign-in state
+    constants.ts         speed limits and defaults (mirrors the backend settings)
 ```
 
 ## Limitations
@@ -193,4 +213,4 @@ frontend/
 - **No OCR.** Scanned PDFs without a text layer are rejected.
 - **One machine only.** SQLite and local file storage are fine for personal use or a single server, but won't scale past one.
 - **Whole documents in the browser.** Every word of a document is eventually held in browser memory, which is fine for books but not for giant documents.
-- **No database migrations.** Tables are created at startup. If a column is removed, it stays in existing databases, unused.
+- **Migrations run at startup.** The backend applies any new Alembic migrations each time it starts. A database from before migrations existed is recognised and brought up to date without losing data. To add one, change `models.py`, then run `uv run alembic revision --autogenerate -m "what changed"` in `backend/` and read the generated file before committing it.

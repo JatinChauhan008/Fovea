@@ -18,6 +18,8 @@ export interface Progress {
   wpm: number;
   updated_at: string;
   percent_complete: number;
+  /** Read far enough through to count as finished (the same rule as Stats). */
+  finished: boolean;
 }
 
 export interface Doc {

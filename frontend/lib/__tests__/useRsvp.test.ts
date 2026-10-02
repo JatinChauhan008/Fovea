@@ -216,4 +216,99 @@ describe("useRsvp scheduling", () => {
     expect(result.current.playing).toBe(true);
     expect(onFinish).not.toHaveBeenCalled();
   });
+
+  // --- 9. More words arriving doesn't restart the word on screen ------------
+  it("keeps the current word's timing when another chunk of words arrives", () => {
+    const first = [tok("a"), tok("b"), tok("c")];
+    const { result, rerender } = renderHook(
+      ({ tokens }) => useRsvp({ tokens, totalWords: 6, initialWpm: 300 }),
+      { initialProps: { tokens: first } },
+    );
+
+    act(() => result.current.play());
+    act(() => vi.advanceTimersByTime(BASE_MS - 50));
+    rerender({ tokens: [...first, tok("d"), tok("e"), tok("f")] });
+    act(() => vi.advanceTimersByTime(50));
+
+    expect(result.current.index).toBe(1);
+  });
+
+  // --- 10. Jumping somewhere that hasn't loaded yet --------------------------
+  it("waits for a page that hasn't loaded yet, then jumps to it", () => {
+    const first = [tok("a", 1, 1), tok("b", 1, 1)];
+    const { result, rerender } = renderHook(
+      ({ tokens }) => useRsvp({ tokens, totalWords: 4, initialWpm: 300 }),
+      { initialProps: { tokens: first } },
+    );
+
+    act(() => result.current.jumpToPage(2));
+    expect(result.current.index).toBe(0);
+    expect(result.current.waitingForPage).toBe(2);
+
+    rerender({ tokens: [...first, tok("c", 1, 2), tok("d", 1, 2)] });
+
+    expect(result.current.index).toBe(2);
+    expect(result.current.waitingForPage).toBeNull();
+  });
+
+  it("waits for a position past the loaded words, then lands on it", () => {
+    const first = [tok("a"), tok("b")];
+    const { result, rerender } = renderHook(
+      ({ tokens }) => useRsvp({ tokens, totalWords: 4, initialWpm: 300 }),
+      { initialProps: { tokens: first } },
+    );
+
+    act(() => result.current.seek(3));
+    expect(result.current.index).toBe(0);
+
+    rerender({ tokens: [...first, tok("c"), tok("d")] });
+
+    expect(result.current.index).toBe(3);
+  });
+
+  it("drops a waiting jump when reading starts again, so skipped words aren't logged", () => {
+    const stretches: ReadingStretch[] = [];
+    const first = [tok("a", 1, 1), tok("b", 1, 1), tok("c", 1, 1)];
+    const { result, rerender } = renderHook(
+      ({ tokens }) =>
+        useRsvp({ tokens, totalWords: 6, initialWpm: 300, onStretchEnd: (s) => stretches.push(s) }),
+      { initialProps: { tokens: first } },
+    );
+
+    act(() => result.current.jumpToPage(2));
+    act(() => result.current.play());
+    rerender({ tokens: [...first, tok("d", 1, 2), tok("e", 1, 2), tok("f", 1, 2)] });
+    act(() => vi.advanceTimersByTime(BASE_MS));
+    act(() => result.current.pause());
+
+    expect(result.current.waitingForPage).toBeNull();
+    expect(stretches).toEqual([expect.objectContaining({ startIndex: 0, endIndex: 1 })]);
+  });
+
+  it("a single step at the end of the loaded words keeps playing instead of waiting", () => {
+    const { result } = renderHook(() =>
+      useRsvp({ tokens: [tok("a"), tok("b")], totalWords: 10, initialWpm: 300 }),
+    );
+
+    act(() => result.current.play());
+    act(() => vi.advanceTimersByTime(BASE_MS));
+    act(() => result.current.stepForward());
+
+    expect(result.current.playing).toBe(true);
+    expect(result.current.index).toBe(1);
+  });
+
+  it("stops waiting for a page that turns out not to exist", () => {
+    const first = [tok("a", 1, 1)];
+    const { result, rerender } = renderHook(
+      ({ tokens }) => useRsvp({ tokens, totalWords: 2, initialWpm: 300 }),
+      { initialProps: { tokens: first } },
+    );
+
+    act(() => result.current.jumpToPage(9));
+    rerender({ tokens: [...first, tok("b", 1, 1)] });
+
+    expect(result.current.waitingForPage).toBeNull();
+    expect(result.current.index).toBe(0);
+  });
 });

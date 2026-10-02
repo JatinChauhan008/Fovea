@@ -1,9 +1,17 @@
 "use client";
 
+/*
+ * Stats: totals, speeds, streak and the daily speed chart, in the reader's time zone.
+ *
+ * Docs: ../architecture.md
+ */
+
 import { useEffect, useState } from "react";
+import { ErrorText, PageHeading, PageLoading } from "@/components/PageParts";
 import { TrendChart } from "@/components/TrendChart";
 import { api } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
+import { formatDuration } from "@/lib/format";
 import type { Analytics } from "@/lib/types";
 
 function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
@@ -21,35 +29,31 @@ function shortDate(iso: string) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function duration(minutes: number) {
-  if (minutes < 60) return `${Math.round(minutes)} min`;
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  return m === 0 ? `${h} h` : `${h} h ${m} min`;
-}
-
 export default function AnalyticsPage() {
   const { user, loading } = useRequireAuth();
   const [data, setData] = useState<Analytics | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const userId = user?.id;
   useEffect(() => {
-    if (!user) return;
-    api.analytics().then(setData).catch((err) => setError(err.message));
-  }, [user]);
+    if (userId === undefined) return;
+    // getTimezoneOffset counts minutes *behind* UTC, so flip its sign.
+    api
+      .analytics(-new Date().getTimezoneOffset())
+      .then(setData)
+      .catch((err) => setError(err.message));
+  }, [userId]);
 
-  if (loading || !user) return null;
+  if (loading || !user) return <PageLoading />;
 
   return (
-    <div className="pt-8">
-      <h1 className="font-serif text-3xl font-semibold tracking-tight">Stats</h1>
+    <div className="pb-20 pt-8">
+      <PageHeading>Stats</PageHeading>
 
       {error ? (
-        <p role="alert" className="mt-4 text-sm text-orp">
-          {error}
-        </p>
+        <ErrorText className="mt-4">{error}</ErrorText>
       ) : !data ? (
-        <p className="mt-4 text-sm text-faint">Loading…</p>
+        <PageLoading inline className="mt-4" />
       ) : data.words_read === 0 ? (
         <p className="mt-3 max-w-prose text-muted">
           Nothing recorded yet. Each time you pause or finish in the reader, that stretch is logged
@@ -59,11 +63,12 @@ export default function AnalyticsPage() {
         <>
           <dl className="mt-8 grid grid-cols-2 gap-x-6 gap-y-8 sm:grid-cols-4">
             <Stat label="Words read" value={data.words_read.toLocaleString()} />
-            <Stat label="Time reading" value={duration(data.minutes_read)} />
+            <Stat label="Time reading" value={formatDuration(data.minutes_read)} />
             <Stat
               label="Average speed"
               value={`${Math.round(data.average_wpm)}`}
-              note={`wpm, fastest ${Math.round(data.best_wpm)}`}
+              // Fastest only counts stretches of 50+ words, so it can be missing.
+              note={data.best_wpm > 0 ? `wpm, fastest ${Math.round(data.best_wpm)}` : "wpm"}
             />
             <Stat
               label="Finished"

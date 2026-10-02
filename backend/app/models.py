@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -13,9 +14,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 
+DOCUMENT_READY = "ready"
+
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(Base):
@@ -43,7 +46,9 @@ class Document(Base):
     tokens_path: Mapped[str] = mapped_column(String(1024))
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     word_count: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(32), default="ready")  # ready | failed
+    # Always "ready" since uploads only create a row once the text is extracted.
+    # Older versions also wrote "processing" and "failed"; startup removes those.
+    status: Mapped[str] = mapped_column(String(32), default=DOCUMENT_READY)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -80,6 +85,8 @@ class ReadingSession(Base):
     """One stretch of actual reading - the raw material for analytics."""
 
     __tablename__ = "reading_sessions"
+    # Stats load one reader's sessions since a date: user first, then time.
+    __table_args__ = (Index("ix_reading_sessions_user_created", "user_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

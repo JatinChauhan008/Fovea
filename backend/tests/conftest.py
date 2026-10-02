@@ -14,7 +14,7 @@ import fitz  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.db import init_db  # noqa: E402
+from app.db import migrate_database  # noqa: E402
 from app.main import app  # noqa: E402
 
 PASSAGE = (
@@ -51,7 +51,7 @@ def make_pdf(pages: int = 3, body: str = PASSAGE) -> bytes:
 
 @pytest.fixture(scope="session", autouse=True)
 def _database():
-    init_db()
+    migrate_database()
 
 
 @pytest.fixture
@@ -60,8 +60,7 @@ def client():
         yield test_client
 
 
-@pytest.fixture
-def auth(client):
+def register_reader(client) -> dict[str, str]:
     """Register a fresh user and return ready-to-use auth headers."""
     import uuid
 
@@ -75,6 +74,17 @@ def auth(client):
 
 
 @pytest.fixture
+def auth(client):
+    return register_reader(client)
+
+
+@pytest.fixture
+def intruder(client):
+    """A second, unrelated reader."""
+    return register_reader(client)
+
+
+@pytest.fixture
 def document(client, auth):
     response = client.post(
         "/upload",
@@ -83,3 +93,12 @@ def document(client, auth):
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """Every test starts with empty sign-in counters, since they all share one client address."""
+    from app.rate_limit import login_limiter, signup_limiter
+
+    login_limiter.reset()
+    signup_limiter.reset()

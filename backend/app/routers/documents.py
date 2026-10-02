@@ -1,188 +1,190 @@
-import asyncio
-import uuid
+"""
+Document flows: uploading a PDF, listing the library, opening one document, streaming
+its words, and deleting it. Every route acts only on the signed-in reader's documents;
+someone else's document answers 404.
+
+Docs: ./architecture.md
+"""
+
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Document, Progress, User
-from app.schemas import ContentOut, DocumentOut, DocumentWithProgress, ProgressOut
+from app.models import User
+from app.permissions import get_owned_document
+from app.queries.documents import create_document, delete_document, list_documents
+from app.queries.progress import find_progress, progress_by_document
+from app.schemas import ContentOut, DocumentOut, DocumentWithProgress
 from app.security import get_current_user
-from app.services.pdf_service import (
-    PdfExtractionError,
-    guess_title,
-    process_pdf,
-    read_tokens,
-    write_tokens,
+from app.services.extraction import extract_pdf
+from app.services.pdf_service import PdfExtractionError, guess_title, read_tokens
+from app.services.reading import document_with_progress
+from app.services.storage import remove_files
+from app.services.uploads import (
+    UploadRejected,
+    check_pdf_filename,
+    check_real_pdf,
+    check_storage_room,
+    new_document_paths,
+    store_upload,
 )
 
 router = APIRouter(tags=["documents"])
 settings = get_settings()
-
-
-def get_owned_document(document_id: int, user: User, db: Session) -> Document:
-    document = db.get(Document, document_id)
-    if document is None or document.user_id != user.id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    return document
-
-
-def progress_out(progress: Progress | None, word_count: int) -> ProgressOut | None:
-    if progress is None:
-        return None
-    percent = (progress.word_index / word_count * 100) if word_count else 0.0
-    return ProgressOut(
-        document_id=progress.document_id,
-        word_index=progress.word_index,
-        page=progress.page,
-        wpm=progress.wpm,
-        updated_at=progress.updated_at,
-        percent_complete=round(min(percent, 100.0), 2),
-    )
+logger = logging.getLogger(__name__)
 
 
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
-async def upload(
+def upload(
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
+    """
+    Add a PDF to the reader's library. A plain function, so FastAPI runs it on a worker
+    thread and the copy, extraction and database work never block other requests.
+
+    1. Check the name, then copy the upload into the reader's folder.
+    2. Check it really is a PDF and that the reader has room for it.
+    3. Pull the words out in a child process and save them next to the PDF.
+    4. Only then create the document, so a failure leaves nothing behind.
+    """
     filename = file.filename or "document.pdf"
-    if not filename.lower().endswith(".pdf"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only PDF files are supported")
-
-    payload = await file.read()
-    size_mb = len(payload) / (1024 * 1024)
-    if size_mb > settings.max_upload_mb:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            f"File is {size_mb:.1f} MB; the limit is {settings.max_upload_mb} MB",
-        )
-    if not payload.startswith(b"%PDF"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That file is not a valid PDF")
-
-    user_dir: Path = settings.storage_dir / str(user.id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-
-    handle = uuid.uuid4().hex
-    pdf_path = user_dir / f"{handle}.pdf"
-    tokens_path = user_dir / f"{handle}.tokens.json"
-    pdf_path.write_bytes(payload)
-
-    # Create a placeholder row so the client gets a document ID immediately,
-    # and the event loop is freed while PyMuPDF does its CPU-bound work.
-    document = Document(
-        user_id=user.id,
-        title=filename,
-        original_filename=filename,
-        stored_path=str(pdf_path),
-        tokens_path=str(tokens_path),
-        page_count=0,
-        word_count=0,
-        status="processing",
-    )
-    db.add(document)
-    db.commit()
-    db.refresh(document)
+    user_dir = settings.storage_dir / str(user.id)
+    pdf_path, tokens_path = new_document_paths(user_dir)
 
     try:
-        tokens, info = await asyncio.to_thread(process_pdf, pdf_path)
-    except PdfExtractionError as exc:
-        document.status = "failed"
-        document.error = str(exc)
-        db.commit()
-        pdf_path.unlink(missing_ok=True)
-        raise HTTPException(422, str(exc)) from exc
+        # Refuse anything not named like a PDF before writing a byte.
+        check_pdf_filename(filename)
 
-    write_tokens(tokens, tokens_path)
+        # Copy the upload to disk in chunks, stopping at the size limit.
+        store_upload(file.file, pdf_path, settings.max_upload_mb)
 
-    document.title = guess_title(info["metadata"], filename)
-    document.page_count = info["page_count"]
-    document.word_count = len(tokens)
-    document.status = "ready"
-    db.commit()
-    db.refresh(document)
+        # A renamed file of another kind is refused here.
+        check_real_pdf(pdf_path)
 
+        # The reader's PDFs and extracted text must fit in their storage limit.
+        check_storage_room(user_dir, settings.max_storage_mb)
+
+        # Extract and tokenize the text in a child process, with a time limit.
+        extracted = extract_pdf(pdf_path, tokens_path, settings.pdf_timeout_seconds)
+
+        # Save the finished document to the reader's library.
+        document = create_document(
+            db,
+            user_id=user.id,
+            title=guess_title(extracted.title, filename),
+            original_filename=filename,
+            stored_path=str(pdf_path),
+            tokens_path=str(tokens_path),
+            page_count=extracted.page_count,
+            word_count=extracted.word_count,
+        )
+    except (UploadRejected, PdfExtractionError) as exc:
+        # A refusal the reader should see: remove what was written and say why.
+        remove_files(pdf_path, tokens_path)
+        code = (
+            exc.status_code
+            if isinstance(exc, UploadRejected)
+            else status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+        logger.info("upload rejected", extra={"user_id": user.id, "status": code})
+        raise HTTPException(code, str(exc)) from exc
+    except Exception:
+        # Anything unexpected: still remove what was written, then let it surface as a 500.
+        remove_files(pdf_path, tokens_path)
+        raise
+
+    logger.info(
+        "document uploaded",
+        extra={
+            "user_id": user.id,
+            "document_id": document.id,
+            "pages": document.page_count,
+            "words": document.word_count,
+        },
+    )
     return DocumentOut.model_validate(document)
 
 
 @router.get("/documents", response_model=list[DocumentWithProgress])
-def list_documents(
+def library(
     user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ) -> list[DocumentWithProgress]:
-    documents = list(
-        db.scalars(
-            select(Document).where(Document.user_id == user.id).order_by(Document.created_at.desc())
-        )
-    )
-    progress_rows = {
-        p.document_id: p for p in db.scalars(select(Progress).where(Progress.user_id == user.id))
-    }
+    """The reader's documents, newest first, each with how far through it they are."""
+    # Their documents, and their place in each, in two queries.
+    documents = list_documents(db, user.id)
+    places = progress_by_document(db, user.id)
 
-    results = []
-    for document in documents:
-        item = DocumentWithProgress.model_validate(document)
-        item.progress = progress_out(progress_rows.get(document.id), document.word_count)
-        results.append(item)
-    return results
+    # Pair each document with the reader's place in it.
+    return [document_with_progress(doc, places.get(doc.id)) for doc in documents]
 
 
 @router.get("/documents/{document_id}", response_model=DocumentWithProgress)
-def get_document(
+def open_document(
     document_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DocumentWithProgress:
-    document = get_owned_document(document_id, user, db)
-    progress = db.scalar(
-        select(Progress).where(Progress.user_id == user.id, Progress.document_id == document.id)
-    )
-    item = DocumentWithProgress.model_validate(document)
-    item.progress = progress_out(progress, document.word_count)
-    return item
+    """One document and the reader's place in it."""
+    # Load the document, refusing anyone but its owner.
+    document = get_owned_document(db, document_id, user)
+
+    # Where they left off, if they've started it.
+    place = find_progress(db, user.id, document.id)
+
+    return document_with_progress(document, place)
 
 
 @router.get("/documents/{document_id}/content", response_model=ContentOut)
-def get_content(
+def stream_words(
     document_id: int,
     start: int = Query(0, ge=0),
     limit: int = Query(5000, ge=1, le=50000),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ContentOut:
-    document = get_owned_document(document_id, user, db)
+    """A window of the document's words, so the reader can stream a long book in chunks."""
+    # Load the document, refusing anyone but its owner.
+    document = get_owned_document(db, document_id, user)
 
+    # Its parsed words (cached, so streaming a book parses it once).
     try:
-        tokens = read_tokens(Path(document.tokens_path))
+        words = read_tokens(Path(document.tokens_path))
     except FileNotFoundError as exc:
+        logger.error("word file missing", extra={"document_id": document.id})
         raise HTTPException(
             status.HTTP_410_GONE, "The processed text for this document is missing"
         ) from exc
 
-    window = tokens[start : start + limit]
+    window = words[start : start + limit]
     return ContentOut(
         document_id=document.id,
         start=start,
         count=len(window),
-        total=len(tokens),
+        total=len(words),
         page_count=document.page_count,
         tokens=window,
     )
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_document(
+def remove_document(
     document_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    document = get_owned_document(document_id, user, db)
+    """Delete a document with its place, reading history and files."""
+    # Load the document, refusing anyone but its owner.
+    document = get_owned_document(db, document_id, user)
+    files = (document.stored_path, document.tokens_path)
 
-    Path(document.stored_path).unlink(missing_ok=True)
-    Path(document.tokens_path).unlink(missing_ok=True)
+    # Remove it from the database first, so a failure here leaves it fully readable.
+    delete_document(db, document)
 
-    db.delete(document)
-    db.commit()
+    # Then remove its PDF and word file from disk.
+    remove_files(*files)
