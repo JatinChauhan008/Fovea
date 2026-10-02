@@ -1,13 +1,26 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 # --- auth ---------------------------------------------------------------
+
+# bcrypt only hashes the first 72 bytes, and the installed version refuses longer input.
+MAX_PASSWORD_BYTES = 72
 
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def _fits_bcrypt(cls, password: str) -> str:
+        if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+            raise ValueError(
+                f"Password is too long: use at most {MAX_PASSWORD_BYTES} bytes "
+                "(72 plain letters, fewer with accents or symbols)"
+            )
+        return password
 
 
 class UserOut(BaseModel):

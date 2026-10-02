@@ -5,16 +5,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.db import init_db
+from app.db import SessionLocal, init_db
 from app.routers import analytics, auth, documents, progress
+from app.services.cleanup import remove_unfinished_documents
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    with SessionLocal() as db:
+        removed = remove_unfinished_documents(db)
+    if removed:
+        logger.info("removed %d unfinished documents left by an older version", removed)
     yield
 
 

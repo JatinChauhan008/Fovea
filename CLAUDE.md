@@ -23,7 +23,7 @@ Fovea is a single-tenant-per-account RSVP speed reader for PDFs. A user uploads 
   - Frontend: `frontend/app/**/page.tsx` — library (`page.tsx`), `login/`, `read/[id]/`, `analytics/`.
 - Models / migrations: `backend/app/models.py` / **none** — tables are created at startup via `Base.metadata.create_all` in `init_db()`. There is no migration tool; adding a column will not alter existing databases (see Project-only rules).
 - Tests:
-  - Backend: `backend/tests/test_*.py` (pytest; fixtures `client`, `auth`, `document` in `conftest.py` use a throwaway DB and storage dir).
+  - Backend: `backend/tests/test_*.py` (pytest; fixtures `client`, `auth`, `intruder` (a second reader), `document` in `conftest.py` use a throwaway DB and storage dir).
   - Frontend: `frontend/lib/__tests__/*.test.ts` (Vitest, fake timers).
 - Architecture docs: `architecture.md` beside each feature's root flow file (none exist yet — create on first change to a feature).
 

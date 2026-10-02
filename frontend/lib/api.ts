@@ -121,9 +121,12 @@ export const api = {
     request<Content>(`/documents/${id}/content?start=${start}&limit=${limit}`),
 
   // --- progress & sessions ---
+  // keepalive lets these finish even when the page is closing, so the last
+  // stretch of reading and the reader's place are not lost with the tab.
   saveProgress: (documentId: number, wordIndex: number, page: number, wpm: number) =>
     request<Progress>("/progress", {
       method: "POST",
+      keepalive: true,
       body: JSON.stringify({
         document_id: documentId,
         word_index: wordIndex,
@@ -140,7 +143,12 @@ export const api = {
     end_index: number;
     wpm: number;
     duration_seconds: number;
-  }) => request<unknown>("/sessions", { method: "POST", body: JSON.stringify(payload) }),
+  }) =>
+    request<unknown>("/sessions", {
+      method: "POST",
+      keepalive: true,
+      body: JSON.stringify(payload),
+    }),
 
   // --- analytics ---
   analytics: () => request<Analytics>("/analytics/summary"),

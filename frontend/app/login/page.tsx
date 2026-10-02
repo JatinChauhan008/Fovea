@@ -60,12 +60,13 @@ export default function LoginPage() {
 
         <label className="block text-sm">
           <span className="mb-1 block text-muted">
-            Password{!signingIn && <span className="text-faint"> (8 characters or more)</span>}
+            Password{!signingIn && <span className="text-faint"> (8 to 72 characters)</span>}
           </span>
           <input
             type="password"
             required
             minLength={8}
+            maxLength={signingIn ? undefined : 72}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             autoComplete={signingIn ? "current-password" : "new-password"}

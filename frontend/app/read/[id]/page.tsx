@@ -7,12 +7,9 @@ import { ReaderControls } from "@/components/ReaderControls";
 import { RsvpDisplay } from "@/components/RsvpDisplay";
 import { api } from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
-import {
-  CONTENT_CHUNK,
-  DEFAULT_WPM,
-  PROGRESS_SAVE_INTERVAL_MS,
-} from "@/lib/constants";
+import { CONTENT_CHUNK, DEFAULT_WPM } from "@/lib/constants";
 import type { Doc, WordToken } from "@/lib/types";
+import { useProgressSaver } from "@/lib/useProgressSaver";
 import { type ReadingStretch, useRsvp } from "@/lib/useRsvp";
 
 interface Loaded {
@@ -106,30 +103,15 @@ export default function ReaderPage() {
 }
 
 function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
-  // Keep the latest position available to the progress saver without
-  // re-creating the interval on every word.
-  const positionRef = useRef({ index: startIndex, page: 1, wpm: startWpm });
-
-  const saveProgress = useCallback(() => {
-    const { index, page, wpm } = positionRef.current;
-    api.saveProgress(doc.id, index, page, wpm).catch(() => {});
-  }, [doc.id]);
-
-  const logStretch = useCallback(
-    (stretch: ReadingStretch) => {
-      api
-        .recordSession({
-          document_id: doc.id,
-          start_index: stretch.startIndex,
-          end_index: stretch.endIndex,
-          wpm: stretch.wpm,
-          duration_seconds: stretch.seconds,
-        })
-        .catch(() => {});
-      saveProgress();
-    },
-    [doc.id, saveProgress],
-  );
+  // The reading loop reports stretches to the saver, but the saver is built from
+  // the loop's position, so the loop's callbacks reach the saver through a ref.
+  const saver = useRef<ReturnType<typeof useProgressSaver> | null>(null);
+  const onStretchEnd = useCallback((stretch: ReadingStretch) => {
+    saver.current?.logStretch(stretch);
+  }, []);
+  const onFinish = useCallback(() => {
+    saver.current?.save();
+  }, []);
 
   const {
     index,
@@ -152,22 +134,15 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
     totalWords: total,
     initialIndex: startIndex,
     initialWpm: startWpm,
-    onStretchEnd: logStretch,
-    onFinish: saveProgress,
+    onStretchEnd,
+    onFinish,
   });
 
+  const progressSaver = useProgressSaver({ documentId: doc.id, index, page, wpm, playing });
+  const { saveFailed } = progressSaver;
   useEffect(() => {
-    positionRef.current = { index, page, wpm };
-  }, [index, page, wpm]);
-
-  // Periodic autosave while reading, plus a final save on the way out.
-  useEffect(() => {
-    if (!playing) return;
-    const timer = window.setInterval(saveProgress, PROGRESS_SAVE_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [playing, saveProgress]);
-
-  useEffect(() => saveProgress, [saveProgress]);
+    saver.current = progressSaver;
+  }, [progressSaver]);
 
   // Browsers throttle timers in hidden tabs, so a reader who switches away would
   // come back to a position that crept forward at about one word per second -
@@ -259,6 +234,12 @@ function Reader({ doc, tokens, total, startIndex, startWpm }: Loaded) {
             onJumpToPage={jumpToPage}
           />
         </div>
+
+        {saveFailed && (
+          <p role="status" className="mt-8 text-center text-sm text-orp">
+            Your place isn&apos;t being saved right now. Fovea will keep trying.
+          </p>
+        )}
 
         {finished && !playing && (
           <p className="mt-8 text-center text-sm text-muted">

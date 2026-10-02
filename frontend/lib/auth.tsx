@@ -10,7 +10,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, getToken, SESSION_EXPIRED_EVENT, setToken } from "./api";
+import { ServerUnreachable } from "@/components/ServerUnreachable";
+import { api, ApiError, getToken, SESSION_EXPIRED_EVENT, setToken } from "./api";
 import type { User } from "./types";
 
 interface AuthValue {
@@ -26,22 +27,33 @@ const AuthContext = createContext<AuthValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [unreachable, setUnreachable] = useState(false);
   const router = useRouter();
 
+  // Restore the session from the stored token, if it is still valid. Only the
+  // server saying "invalid" (a 401, which also clears the token) signs the reader
+  // out; a server that is down or erroring keeps the token and offers a retry.
+  const restore = useCallback(() => {
+    setUnreachable(false);
+    setLoading(true);
+    api
+      .me()
+      .then(setUser)
+      .catch((err) => {
+        if (!(err instanceof ApiError && err.status === 401)) setUnreachable(true);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
   useEffect(() => {
-    // Restore the session from the stored token, if it is still valid.
     if (!getToken()) {
       // Deferred so the "no session" result lands like any other async
       // resolution rather than cascading a second render immediately.
       queueMicrotask(() => setLoading(false));
       return;
     }
-    api
-      .me()
-      .then(setUser)
-      .catch(() => setToken(null))
-      .finally(() => setLoading(false));
-  }, []);
+    queueMicrotask(restore);
+  }, [restore]);
 
   // A token that expires mid-session drops the user back at the login screen
   // (via useRequireAuth) instead of leaving every request failing with a 401.
@@ -74,7 +86,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user, loading, login, register, logout],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {unreachable ? <ServerUnreachable onRetry={restore} /> : children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {

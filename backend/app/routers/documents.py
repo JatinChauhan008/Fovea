@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import Document, Progress, User
+from app.models import DOCUMENT_READY, Document, Progress, User
 from app.schemas import ContentOut, DocumentOut, DocumentWithProgress, ProgressOut
 from app.security import get_current_user
 from app.services.pdf_service import (
@@ -18,6 +18,7 @@ from app.services.pdf_service import (
     read_tokens,
     write_tokens,
 )
+from app.services.storage import remove_files
 
 router = APIRouter(tags=["documents"])
 settings = get_settings()
@@ -72,40 +73,31 @@ async def upload(
     tokens_path = user_dir / f"{handle}.tokens.json"
     pdf_path.write_bytes(payload)
 
-    # Create a placeholder row so the client gets a document ID immediately,
-    # and the event loop is freed while PyMuPDF does its CPU-bound work.
-    document = Document(
-        user_id=user.id,
-        title=filename,
-        original_filename=filename,
-        stored_path=str(pdf_path),
-        tokens_path=str(tokens_path),
-        page_count=0,
-        word_count=0,
-        status="processing",
-    )
-    db.add(document)
-    db.commit()
-    db.refresh(document)
-
+    # The row is only created once the text is out, so a failed upload leaves no
+    # half-made document in the library - and its files are removed too.
     try:
         tokens, info = await asyncio.to_thread(process_pdf, pdf_path)
-    except PdfExtractionError as exc:
-        document.status = "failed"
-        document.error = str(exc)
+        write_tokens(tokens, tokens_path)
+        document = Document(
+            user_id=user.id,
+            title=guess_title(info["metadata"], filename),
+            original_filename=filename,
+            stored_path=str(pdf_path),
+            tokens_path=str(tokens_path),
+            page_count=info["page_count"],
+            word_count=len(tokens),
+            status=DOCUMENT_READY,
+        )
+        db.add(document)
         db.commit()
-        pdf_path.unlink(missing_ok=True)
-        raise HTTPException(422, str(exc)) from exc
+    except PdfExtractionError as exc:
+        remove_files(pdf_path, tokens_path)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except Exception:
+        remove_files(pdf_path, tokens_path)
+        raise
 
-    write_tokens(tokens, tokens_path)
-
-    document.title = guess_title(info["metadata"], filename)
-    document.page_count = info["page_count"]
-    document.word_count = len(tokens)
-    document.status = "ready"
-    db.commit()
     db.refresh(document)
-
     return DocumentOut.model_validate(document)
 
 
@@ -181,8 +173,7 @@ def delete_document(
 ) -> None:
     document = get_owned_document(document_id, user, db)
 
-    Path(document.stored_path).unlink(missing_ok=True)
-    Path(document.tokens_path).unlink(missing_ok=True)
+    remove_files(document.stored_path, document.tokens_path)
 
     db.delete(document)
     db.commit()

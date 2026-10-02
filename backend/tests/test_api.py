@@ -68,6 +68,62 @@ def test_upload_rejects_a_pdf_with_no_text_layer(client, auth):
     assert "OCR" in response.json()["detail"]
 
 
+def test_a_failed_upload_leaves_nothing_behind(client, auth):
+    import fitz
+
+    from app.config import get_settings
+
+    empty = fitz.open()
+    empty.new_page()
+    payload = empty.tobytes()
+    empty.close()
+
+    client.post("/upload", files={"file": ("scan.pdf", payload, "application/pdf")}, headers=auth)
+
+    assert client.get("/documents", headers=auth).json() == []
+    user_id = client.get("/auth/me", headers=auth).json()["id"]
+    user_dir = get_settings().storage_dir / str(user_id)
+    assert not user_dir.exists() or list(user_dir.iterdir()) == []
+
+
+def test_an_upload_that_breaks_after_extraction_leaves_nothing_behind(client, auth, monkeypatch):
+    import pytest
+
+    from app.config import get_settings
+    from app.routers import documents
+
+    def broken_title(*_args):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(documents, "guess_title", broken_title)
+    with pytest.raises(RuntimeError):
+        client.post(
+            "/upload", files={"file": ("ok.pdf", make_pdf(), "application/pdf")}, headers=auth
+        )
+
+    assert client.get("/documents", headers=auth).json() == []
+    user_id = client.get("/auth/me", headers=auth).json()["id"]
+    user_dir = get_settings().storage_dir / str(user_id)
+    assert not user_dir.exists() or list(user_dir.iterdir()) == []
+
+
+def test_sign_up_accepts_a_password_of_72_bytes(client):
+    response = client.post(
+        "/auth/register", json={"email": "seventy-two@example.com", "password": "a" * 72}
+    )
+    assert response.status_code == 201
+
+
+def test_sign_up_rejects_a_password_over_72_bytes_cleanly(client):
+    # 25 euro signs are 25 characters but 75 bytes, which bcrypt cannot hash.
+    for password in ["a" * 73, "€" * 25]:
+        response = client.post(
+            "/auth/register", json={"email": "too-long@example.com", "password": password}
+        )
+        assert response.status_code == 422
+        assert "72" in response.json()["detail"][0]["msg"]
+
+
 def test_content_returns_render_ready_tokens(client, auth, document):
     response = client.get(f"/documents/{document['id']}/content?start=0&limit=25", headers=auth)
     assert response.status_code == 200
@@ -86,16 +142,6 @@ def test_content_pagination_walks_the_document(client, auth, document):
     first = client.get(f"/documents/{document['id']}/content?start=0&limit=10", headers=auth)
     second = client.get(f"/documents/{document['id']}/content?start=10&limit=10", headers=auth)
     assert first.json()["tokens"] != second.json()["tokens"]
-
-
-def test_one_reader_cannot_read_anothers_document(client, auth, document):
-    other = client.post(
-        "/auth/register", json={"email": "intruder@example.com", "password": "another-password"}
-    )
-    headers = {"Authorization": f"Bearer {other.json()['access_token']}"}
-
-    assert client.get(f"/documents/{document['id']}", headers=headers).status_code == 404
-    assert client.get(f"/documents/{document['id']}/content", headers=headers).status_code == 404
 
 
 def test_progress_saves_and_resumes(client, auth, document):
@@ -191,6 +237,8 @@ def test_delete_removes_the_document_and_its_text(client, auth):
 
 def test_another_reader_cannot_touch_a_document(client, auth, intruder, document):
     doc_id = document["id"]
+    # The owner has a saved place, so a missing ownership check would leak it.
+    client.post("/progress", json={"document_id": doc_id, "word_index": 40}, headers=auth)
     session = {
         "document_id": doc_id,
         "start_index": 0,
@@ -212,6 +260,7 @@ def test_another_reader_cannot_touch_a_document(client, auth, intruder, document
     assert client.delete(f"/documents/{doc_id}", headers=intruder).status_code == 404
 
     # Nothing the intruder sent reached the owner's data.
-    assert client.get(f"/documents/{doc_id}", headers=auth).json()["progress"] is None
+    assert client.get(f"/documents/{doc_id}", headers=auth).json()["progress"]["word_index"] == 40
+    assert client.get(f"/documents/{doc_id}/content", headers=auth).status_code == 200
     assert client.get("/analytics/summary", headers=auth).json()["words_read"] == 0
     assert client.get("/documents", headers=intruder).json() == []
